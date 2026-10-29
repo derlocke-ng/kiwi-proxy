@@ -48,7 +48,7 @@ SOCKS5 on <bridge-ip>:port    permit only <provider-ip>:port
                               forwarder 127.0.0.1:1080  ─┐
                               dnscrypt-proxy 127.0.0.2:53 │
                                                           ▼
-                                         browser joins the gateway netns
+                     members (a browser, a tool) join the gateway netns
 ```
 
 kiwi-proxy resolves the provider container's current bridge address every bring-up
@@ -78,7 +78,7 @@ name that is not a legal Python identifier (`9proxy`) is fine.
 ## The contract
 
 `provider.py` imports the contract from kiwi-proxy (a runtime prerequisite: the
-module's `DEPENDS=kiwi-proxy`) and usually subclasses `ContainerProvider`, which implements the
+module's `DEPENDS=kiwi-proxy podman`) and usually subclasses `ContainerProvider`, which implements the
 whole container lifecycle. A module then declares only its manifest, its container
 spec, and its leases:
 
@@ -136,10 +136,14 @@ Three auth modes, handled by kiwi-proxy so the module never touches the keyring:
 - **`account`** — fixed credentials you hold with the provider, given as the
   exit endpoint's own username/password and forwarded as usual.
 
-Module-level secrets that are not per-exit (a VPN WireGuard key, a 9proxy login)
-are stored as their own podman secrets via `ctx.set_secret(...)` and mounted into
-the provider container; `kiwi-proxy module setup <name>` is where a module collects
-them.
+Module-level configuration that is not per-exit — a VPN's WireGuard key, a 9proxy
+login, a Mysterium identity — lives as files in the module's state directory,
+`~/.local/share/kiwi-proxy/modules-state/<name>/` (`ctx.state_dir`), mounted
+read-only into the provider container so it stays out of `podman inspect`; each
+module's README says which files. `kiwi-proxy module setup <name>` only builds or
+pulls the module's images. (`ctx.set_secret` / `ctx.secret_mount` exist for a
+module that would rather keep a value as a podman secret; none of the first-party
+modules does.)
 
 ## Using it
 

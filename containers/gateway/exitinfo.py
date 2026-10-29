@@ -3,7 +3,11 @@
 
 `podman exec <gateway> kf-exitinfo [URL]` prints the service's JSON body. Run
 inside the gateway so it measures every exit the same way, including a provider
-exit on the rootless bridge that the host cannot reach. stdlib only.
+exit on the rootless bridge that the host cannot reach.
+
+`kf-exitinfo --out PATH URL` saves a body instead (a 200 of at least 1 KiB, written
+atomically): how a gateway on a kiwi-server machine, with no host-side kiwi-proxy,
+fetches its blocklists — through its own exit, like everything else. stdlib only.
 """
 
 from __future__ import annotations
@@ -43,6 +47,9 @@ def connect(host: str, port: int, timeout: float = 30.0) -> socket.socket:
 
 
 def main(argv: list[str]) -> int:
+    out = None
+    if len(argv) > 2 and argv[1] == "--out":
+        out, argv = argv[2], [argv[0], *argv[3:]]
     url = urlparse(argv[1] if len(argv) > 1 else DEFAULT_URL)
     host = url.hostname or ""
     port = url.port or (443 if url.scheme == "https" else 80)
@@ -64,7 +71,20 @@ def main(argv: list[str]) -> int:
     head, _, body = raw.partition(b"\r\n\r\n")
     if b"transfer-encoding: chunked" in head.lower():
         body = dechunk(body)
-    sys.stdout.write(body.decode("utf-8", "replace"))
+    if out is None:
+        sys.stdout.write(body.decode("utf-8", "replace"))
+        return 0
+    status = head.split(b"\r\n", 1)[0]
+    if b" 200 " not in status + b" " or len(body) < 1024:
+        print(
+            f"kf-exitinfo: {url.geturl()}: {status.decode('latin-1')} ({len(body)} bytes)",
+            file=sys.stderr,
+        )
+        return 1
+    tmp = out + ".tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(body)
+    os.replace(tmp, out)
     return 0
 
 

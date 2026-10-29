@@ -74,9 +74,9 @@ class ProviderContext:
         return (base / subdir / "Containerfile") if subdir else (base / "Containerfile")
 
     # ------------------------------------------------------------- module secrets
-    # Module-level credentials (a VPN WireGuard key, a 9proxy login) are not
-    # per-profile, so they are stored as their own podman secrets and mounted into
-    # the provider container. Per-profile credentials keep going through the
+    # For a module that wants a module-level value (not per-exit) as a podman
+    # secret mounted into its container. The first-party modules keep theirs as
+    # files in ctx.state_dir instead. Per-exit credentials always go through the
     # gateway forwarder, untouched.
     def secret_name(self, key: str) -> str:
         return f"{paths.PREFIX}-mod-{self.name}-{key}"
@@ -191,7 +191,7 @@ class ContainerProvider:
         return Endpoint(
             host=ip,
             port=self.manifest.socks_port,
-            username=None,  # per-profile isolation/account creds are set at launch
+            username=None,  # per-exit isolation/account creds are set when the gateway comes up
             has_password=False,
             module=self.name,
             lease=lease,
@@ -305,7 +305,7 @@ class TunnelProvider(ContainerProvider):
             # The adapter joins the tunnel's netns (--network container:), which
             # makes the tunnel a dependent container: podman refuses to replace it
             # while the adapter exists. Remove a stale adapter first, exactly as the
-            # gateway launch removes the browser before replacing the gateway.
+            # gateway.up removes its members before replacing a gateway.
             podman.rm(ctx.adapter_name(lease))
             podman.start(tunnel)
         ip = self._await_tunnel(ctx, tunnel.name)

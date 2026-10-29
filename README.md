@@ -40,6 +40,19 @@ kiwi-proxy setup             # gateway image, DNS data, provider module images
 
 `kiwi install kiwi-fox` brings it along; kiwi-fox's own `setup` runs this one.
 
+## The app
+
+`kiwi-proxy-gui` ("Kiwi-Proxy" in your app grid) does everything below without a
+terminal: add and edit exits — a SOCKS5 you were given or a provider module — bring
+them up and down, offer one as a SOCKS5 port on this computer and copy its address,
+check what the world sees through it, see who joined a gateway, set up modules.
+
+![Exits](data/screenshots/1-exits.png)
+
+![A new exit](data/screenshots/2-new-exit.png)
+
+![DNS and ad-blocking](data/screenshots/4-dns-adblock.png)
+
 ## Use
 
 ```
@@ -85,6 +98,25 @@ podman run --rm --network "container:$(kiwi-proxy name work)" \
 brought up goes when the last member leaves; one brought up with `kiwi-proxy up`
 stays until `kiwi-proxy down`.
 
+### DNS and ad-blocking
+
+By default an exit resolves names in its own gateway (dnscrypt-proxy, DoH through
+the same exit) and refuses names on its blocklists — oisd big unless you pick
+others (`--blocklist oisd-small`, `--blocklist oisd-nsfw`, `--no-blocklist`, or the
+switches in the app). The block applies wherever a name shows up:
+
+| Who | How it is blocked |
+| --- | --- |
+| a container that joined the gateway | its resolver (`/etc/resolv.conf` → 127.0.0.2) answers REFUSED |
+| an app on the host port with `socks5h://` | the forwarder refuses the CONNECT for that name |
+| a kiwi-server exit | the gateway fetches its lists through its own exit, daily, and the forwarder refuses |
+
+`--dns remote` hands every name to the exit untouched — no resolver, no
+ad-blocking. That is what Tor Browser needs, and what kiwi-fox sets for it. An app
+using plain `socks5://` (no `h`) resolves names itself, outside the exit: use
+`socks5h`. The lists refresh daily (`kiwi-proxy-blocklists.timer`, or
+`kiwi-proxy dns update`); running gateways pick the new list up by themselves.
+
 ### Tor Browser
 
 Tor Browser puts a SOCKS username and password on every request to get a circuit
@@ -122,8 +154,8 @@ write one.
 
 ## Requirements
 
-Rootless Podman, Python 3.12+ with pydantic. `secret-tool` when there is a desktop
-keyring. kiwi-server machines need only their stack runtime: they pull the gateway
+Rootless Podman, Python 3.12+ with pydantic. GTK 4 + libadwaita (PyGObject) for
+the app. `secret-tool` when there is a desktop keyring. kiwi-server machines need only their stack runtime: they pull the gateway
 image from `ghcr.io/derlocke-ng/kiwi-proxy/gateway`.
 
 ## License

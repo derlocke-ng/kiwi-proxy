@@ -132,13 +132,19 @@ def write_expose_credentials(ex: Exit, password: str | None = None) -> str | Non
     return name
 
 
+def blocklist_in_gateway(ex: Exit) -> str:
+    """This exit's merged list, as the gateway sees it (the directory is mounted,
+    not the file, so a daily update's atomic replace reaches running gateways)."""
+    return f"/blocklist/{dns.merged_name(ex.dns.blocklists)}"
+
+
 def write_resolver_config(ex: Exit) -> Path | None:
     if ex.dns.mode != "resolver":
         return None
     dns.merged_blocklist(ex.dns.blocklists)
     cfg = dns.toml_config(
         ex.dns.upstream,
-        blocklist="/blocklist/blocked-names.txt",
+        blocklist=blocklist_in_gateway(ex),
         forwarder="127.0.0.1",
         forwarder_port=FORWARDER_PORT,
     )
@@ -192,6 +198,10 @@ def gateway_spec(
             (str(rt / "dnscrypt-proxy.toml"), "/run/kf/dnscrypt-proxy.toml", "ro,z"),
             (str(paths.blocklists_dir()), "/blocklist", "ro,z"),
         ]
+        if ex.dns.blocklists:
+            # The same list in the forwarder, for clients that hand it names
+            # (socks5h on the host port) instead of asking the resolver.
+            env["KF_BLOCKLIST"] = blocklist_in_gateway(ex)
     all_labels = {
         paths.ROLE_LABEL: "gateway",
         paths.EXIT_LABEL: ex.id,

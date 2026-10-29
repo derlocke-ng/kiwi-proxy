@@ -16,6 +16,9 @@
 #   KF_FORWARDER_PORT  the members' SOCKS5 on 127.0.0.1 (1080)
 #   KF_EXPOSE_PORT     a second SOCKS5 on 0.0.0.0, for the host to publish
 #   KF_DNS_MODE        resolver (dnscrypt-proxy on 127.0.0.2) | remote
+#   KF_BLOCKLIST       names the forwarder refuses (the resolver's list, or below)
+#   KF_BLOCKLIST_URLS  lists to fetch through this exit, daily, into KF_BLOCKLIST
+#                      (kiwi-server machines: no host-side tool downloads them)
 set -euo pipefail
 
 log() { printf 'gateway: %s\n' "$*"; }
@@ -124,8 +127,32 @@ else
     log "resolver: disabled (remote DNS at the proxy)"
 fi
 
+# ------------------------------------------------------------- blocklists
+FETCHER_PID=""
+if [ -n "${KF_BLOCKLIST_URLS:-}" ]; then
+    : "${KF_BLOCKLIST:?KF_BLOCKLIST_URLS needs KF_BLOCKLIST, the file to write}"
+    fetch_lists() {
+        local merged="${KF_BLOCKLIST}.new" part="${KF_BLOCKLIST}.part" url
+        : > "$merged"
+        for url in $KF_BLOCKLIST_URLS; do
+            kf-exitinfo --out "$part" "$url" || { rm -f "$merged" "$part"; return 1; }
+            cat "$part" >> "$merged"
+        done
+        rm -f "$part"
+        mv "$merged" "$KF_BLOCKLIST"
+        log "blocklists: $(wc -l < "$KF_BLOCKLIST") names, fetched through the exit"
+    }
+    # Daily, and every ten minutes until the first fetch works. The forwarder
+    # picks a new file up by itself.
+    ( while true; do
+          if fetch_lists; then sleep 86400; else sleep 600; fi
+      done ) &
+    FETCHER_PID=$!
+fi
+
 cleanup() {
     log "shutting down"
+    [ -n "$FETCHER_PID" ] && kill "$FETCHER_PID" 2>/dev/null || true
     [ -n "$RESOLVER_PID" ] && kill "$RESOLVER_PID" 2>/dev/null || true
     kill "$FORWARDER_PID" 2>/dev/null || true
     wait 2>/dev/null || true
@@ -135,7 +162,7 @@ trap cleanup SIGTERM SIGINT
 
 log "ready — the namespace is sealed"
 
-# Hold the namespace open, and die if either service dies so the browser loses
+# Hold the namespace open, and die if either service dies so every member loses
 # its route rather than silently running without one.
 while true; do
     sleep 5

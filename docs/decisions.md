@@ -28,8 +28,9 @@ setup anyway, moved to `kiwi-proxy/…`.
 
 **The `app` label is the consumer's.** kiwi-proxy finds its containers by
 `kiwi-proxy.role`. `app` stays whatever the consumer sets, so kiwi-fox's gateways
-are still `app=kiwi-fox`, `kiwi-fox.role=gateway` — what kiwi-pentesting discovers
-today — without kiwi-pentesting changing first.
+are still `app=kiwi-fox`, `kiwi-fox.role=gateway`, which kept kiwi-pentesting
+working through the split; it now finds gateways by `kiwi-proxy.role` and keeps
+kiwi-fox's labels as its fallback.
 
 **A gateway is shared, so it is reused, not replaced.** Inside kiwi-fox every
 launch replaced the gateway, which was fine with one member. With several (a browser
@@ -99,6 +100,20 @@ reaches its public address directly.
 **A provider exit is measured from inside.** The host is not on the rootless bridge,
 so it cannot pre-flight a provider. `kf-exitinfo` asks an ip-echo service through
 the forwarder from inside the gateway, which works the same for every exit.
+
+**Ad-blocking happens wherever a name shows up.** The resolver blocks for members
+that ask it, but a client on the host port with `socks5h` hands the name to the
+forwarder and never asks a resolver, so the forwarder applies the same list to
+CONNECT-by-name. It is not done in remote mode: remote means the names reach the
+exit untouched, which is what Tor Browser needs (a filtered Tor Browser is one
+that stands out). Each set of lists has its own merged file — one shared file let
+the last exit to start decide every other exit's list.
+
+**A server gateway fetches its own lists through its exit.** A kiwi-server machine
+has no kiwi-proxy installed to download them, and fetching before the firewall is
+up would mean a direct connection from the machine. Fetching through the sealed
+exit keeps the one-route rule, and the list arrives from the exit's network like
+everything else.
 
 **No EDNS Client Subnet.** The resolver and the members share one exit, so the
 upstream already sees the right location.

@@ -100,15 +100,16 @@ a `kiwi-proxy up` of it, keeps the exit alive. Its launch-time pre-flight
 
 ## kiwi-pentesting
 
-Today it discovers kiwi-fox gateways by `app=kiwi-fox` + `kiwi-fox.role=gateway`;
-kiwi-fox keeps setting those labels, so that keeps working. With kiwi-proxy it can
-also:
+It drives the CLI (`core/proxyclient.py`, `docs/kiwi-proxy-integration.md` there):
 
-- list every exit, including ones with no browser: `kiwi-proxy list --json`, or
-  gateways from any app: `kiwi-proxy ps --json` (filter `kiwi-proxy.role=gateway`);
-- bring an identity up headless — the gap its `docs/kiwi-fox-integration.md`
-  describes: `kiwi-proxy up <name> --json`, then join `name`;
-- measure the exit without its own probe container: `kiwi-proxy check <name> --json`.
+- `kiwi-proxy list --json` for every exit, including ones with no browser, and
+  `kiwi-proxy ps --json` / the `kiwi-proxy.role=gateway` label for running gateways
+  from any app; kiwi-fox's own labels (`kiwi-fox.role=gateway`, `kiwi-fox.profile`)
+  are its fallback;
+- `kiwi-proxy up <name> --json` to bring an identity up headless, then `name` to
+  join; `kiwi-proxy down <name>` when done;
+- `kiwi-proxy check <name> --json` to measure the exit without a probe container
+  of its own.
 
 ## Something on the host
 

@@ -136,3 +136,20 @@ def test_the_host_listener_leaves_through_the_same_exit(running_gateway, gateway
     host, _, port = running_gateway["expose"].rpartition(":")
     via_host = endpoint.preflight(Endpoint(host=host.strip("[]"), port=int(port)))
     assert via_host.ip == gateway.measure_exit(gateway_name).ip
+
+
+def test_the_host_listener_refuses_blocked_names(running_gateway, gateway_name):
+    # socks5h hands the name to the forwarder, past the resolver; the forwarder
+    # applies the same list.
+    if not running_gateway["expose"] or not resolver_mode(gateway_name):
+        pytest.skip("needs an exposed exit in resolver mode")
+    if sh(gateway_name, "printenv KF_EXPOSE_CREDS_FILE"):
+        pytest.skip("the host listener wants a password")
+    from kiwi_proxy import endpoint
+    from kiwi_proxy.models import Endpoint
+
+    host, _, port = running_gateway["expose"].rpartition(":")
+    ep = Endpoint(host=host.strip("[]"), port=int(port))
+    with pytest.raises(endpoint.EndpointError, match="code 2"):
+        endpoint.socks5_connect(ep, BLOCKED, 443)
+    endpoint.socks5_connect(ep, ALLOWED, 443).close()

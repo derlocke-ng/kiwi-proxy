@@ -87,7 +87,7 @@ def exec_(name: str, args: list[str], *, timeout: int = 60) -> subprocess.Comple
 def spec_args(spec: ContainerSpec, *, detach: bool = True) -> list[str]:
     """Rendered separately from running it, so specs can be golden-file tested."""
     # --replace rather than a separate rm: `podman rm` can return before the
-    # storage entry is released, and starting several profiles in quick succession
+    # storage entry is released, and starting several containers in quick succession
     # then fails with "container name is already in use". Replacing is atomic.
     args = ["run", "--replace", "--name", spec.name]
     if detach:
@@ -120,7 +120,7 @@ def spec_args(spec: ContainerSpec, *, detach: bool = True) -> list[str]:
         # subuid), so a 0600 file owned by the host user is correctly unreadable.
         args += ["--secret", f"{name},type=mount,target={target}"]
     # "app" names the application the container is for. A consumer may set it
-    # (kiwi-fox labels its gateways app=kiwi-fox, which kiwi-pentesting discovers);
+    # (kiwi-fox labels its gateways app=kiwi-fox, which kiwi-pentesting discovers as a fallback);
     # kiwi-proxy's own filter is the kiwi-proxy.role label, not this.
     for key, val in sorted({"app": paths.APP, **spec.labels}.items()):
         args += ["--label", f"{key}={val}"]

@@ -15,6 +15,13 @@ Two listeners, one relay:
                                   username/password (RFC 1929) when
                                   KF_EXPOSE_CREDS_FILE names a credentials file
 
+KF_BLOCKLIST names a list of blocked domains (dnscrypt-proxy's bare-name format,
+the same file the resolver reads): a CONNECT by name to one of them, or to a name
+under one, is refused before anything leaves. Members that resolve through the
+gateway's resolver are already covered by it; this covers clients that hand the
+name to the proxy instead — socks5h on the host listener. The file is re-read when
+it changes, so the daily update reaches a running gateway.
+
 KF_SOCKS_AUTH picks what an unguarded listener does with client credentials:
 "inject" (answer no-auth, send the exit's pair) or "passthrough" (Tor Browser:
 accept the client's per-site credentials and send them upstream behind the exit's
@@ -41,6 +48,7 @@ import os
 import socket
 import struct
 import sys
+import time
 from pathlib import Path
 
 LOG = logging.getLogger("forwarder")
@@ -57,6 +65,48 @@ INJECT = "inject"
 PASSTHROUGH = "passthrough"
 
 
+class Blocklist:
+    """Blocked domains, re-read when the file changes (checked at most once a
+    minute). A missing or unreadable file blocks nothing rather than everything:
+    the firewall is the guarantee, this is ad-blocking."""
+
+    RECHECK = 60.0
+
+    def __init__(self, path: str) -> None:
+        self.path = Path(path)
+        self.entries: set[str] = set()
+        self._mtime: float | None = None
+        self._checked = float("-inf")
+        self.refresh(force=True)
+
+    def refresh(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._checked < self.RECHECK:
+            return
+        self._checked = now
+        try:
+            mtime = self.path.stat().st_mtime
+        except OSError:
+            return
+        if mtime == self._mtime:
+            return
+        entries = set()
+        try:
+            for raw in self.path.read_text(errors="replace").splitlines():
+                entry = raw.strip().lower()
+                if entry and not entry.startswith(("#", "!")):
+                    entries.add(entry.removeprefix("*."))
+        except OSError:
+            return
+        self.entries, self._mtime = entries, mtime
+        LOG.info("blocklist: %d names from %s", len(entries), self.path)
+
+    def blocks(self, name: str) -> bool:
+        self.refresh()
+        labels = name.lower().rstrip(".").split(".")
+        return any(".".join(labels[i:]) in self.entries for i in range(len(labels)))
+
+
 class Upstream:
     def __init__(
         self,
@@ -65,10 +115,12 @@ class Upstream:
         user: str | None,
         password: str | None,
         mode: str = INJECT,
+        blocklist: Blocklist | None = None,
     ) -> None:
         self.host, self.port = host, port
         self.user, self.password = user or None, password or None
         self.mode = mode
+        self.blocklist = blocklist
 
     @property
     def authed(self) -> bool:
@@ -95,10 +147,10 @@ class Inbound:
 
 
 def combine_user(token: str, client_user: str) -> str:
-    """The upstream username for a passthrough connection: the profile token,
+    """The upstream username for a passthrough connection: the exit token,
     then the client's own SOCKS username (Tor Browser's first-party domain),
     so Tor's IsolateSOCKSAuth keeps a circuit per site while the token still
-    isolates profiles. RFC 1929 caps the username at 255 bytes, and the client
+    isolates exits. RFC 1929 caps the username at 255 bytes, and the client
     one can be a long domain, so an over-length pair folds to a hash — still
     deterministic (same site -> same circuit) and collision-resistant."""
     combined = f"{token}:{client_user}"
@@ -247,8 +299,8 @@ async def handle(
             return
 
         # The upstream credentials for this one connection: in passthrough with
-        # client credentials, the profile token plus the client's own username
-        # (so Tor's per-site isolation survives); otherwise the profile pair.
+        # client credentials, the exit token plus the client's own username
+        # (so Tor's per-site isolation survives); otherwise the exit's pair.
         if client_user is not None and up.user:
             up_user: str | None = combine_user(up.user, client_user)
             up_password: str | None = client_pass
@@ -278,6 +330,11 @@ async def handle(
         if cmd != CMD_CONNECT:
             # No BIND, no UDP ASSOCIATE: SOCKS5 UDP is unavailable upstream anyway.
             await deny(client_w, REP_CMD)
+            return
+
+        if atyp == ATYP_DOMAIN and up.blocklist and up.blocklist.blocks(host):
+            LOG.debug("blocked %s", host)
+            await deny(client_w, REP_NOT_ALLOWED)
             return
 
         try:
@@ -387,11 +444,12 @@ async def main() -> int:
         user, password = read_credentials(creds)
         in_user, in_password = read_credentials(os.environ.get("KF_EXPOSE_CREDS_FILE", ""))
     if mode == PASSTHROUGH and not user:
-        # Passthrough always prepends the profile token; without one a client
+        # Passthrough always prepends the exit token; without one a client
         # could land in any bucket, so refuse to start rather than isolate nothing.
-        LOG.error("passthrough mode needs a profile token in the credentials file")
+        LOG.error("passthrough mode needs an exit token in the credentials file")
         return 2
-    up = Upstream(host, port, user, password, mode)
+    blocklist = Blocklist(os.environ["KF_BLOCKLIST"]) if os.environ.get("KF_BLOCKLIST") else None
+    up = Upstream(host, port, user, password, mode, blocklist)
     server = await asyncio.start_server(
         lambda r, w: handle(r, w, up), "127.0.0.1", listen_port, reuse_address=True
     )

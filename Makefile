@@ -1,14 +1,17 @@
-.PHONY: run images test leak lint fmt setup
+.PHONY: run gui images test leak lint fmt setup
 PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 export PYTHONPATH := src:.
 
 setup:
-	python3 -m venv .venv
+	python3 -m venv --system-site-packages .venv
 	.venv/bin/python -m pip install -q --upgrade pip
 	.venv/bin/python -m pip install -q pydantic pytest ruff jinja2 pyyaml
 
 run:
 	$(PY) -m kiwi_proxy $(ARGS)
+
+gui:
+	$(PY) -m kiwi_proxy.ui
 
 images:
 	podman build -t kiwi-proxy/gateway:latest -f containers/gateway/Containerfile containers/gateway

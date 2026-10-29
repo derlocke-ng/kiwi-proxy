@@ -92,9 +92,23 @@ def fetch_blocklist(name: str, timeout: int = 120) -> Path:
     return dest
 
 
+DEFAULT_BLOCKLISTS = ["oisd-big"]
+
+
+def merged_name(names: list[str]) -> str:
+    """The merged file for one set of lists. Exits with different lists must not
+    share a file — merging one set used to overwrite the other's. The default set
+    keeps the name it always had (kiwi-fox's doctor looks for it)."""
+    key = sorted(set(names))
+    if key == DEFAULT_BLOCKLISTS:
+        return "blocked-names.txt"
+    return "blocked-names-" + ("+".join(key) if key else "none") + ".txt"
+
+
 def merged_blocklist(names: list[str]) -> Path:
-    """One file for the container to read, so the config never varies."""
-    out = paths.blocklists_dir() / "blocked-names.txt"
+    """One file per set of lists for the container to read, replaced atomically
+    so a gateway reading it mid-update never sees half a list."""
+    out = paths.blocklists_dir() / merged_name(names)
     out.parent.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
     lines: list[str] = []
@@ -109,8 +123,17 @@ def merged_blocklist(names: list[str]) -> Path:
             if entry not in seen:
                 seen.add(entry)
                 lines.append(entry)
-    out.write_text("\n".join(lines) + "\n")
+    tmp = out.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n")
+    tmp.replace(out)
     return out
+
+
+def blocked(name: str, entries: set[str]) -> bool:
+    """dnscrypt-proxy's bare-name rule, which the forwarder applies too: an entry
+    blocks the name itself and every name under it, never a lookalike."""
+    labels = name.lower().rstrip(".").split(".")
+    return any(".".join(labels[i:]) in entries for i in range(len(labels)))
 
 
 def toml_config(upstream: str, *, blocklist: str, forwarder: str, forwarder_port: int) -> str:
