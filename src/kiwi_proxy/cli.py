@@ -9,7 +9,7 @@ import shutil
 import sys
 
 from . import __version__, dns, endpoint, exits, gateway, paths, podman, providers, secrets
-from .models import DnsConfig, Endpoint, Exit, Expose
+from .models import DnsConfig, Exit, Expose
 
 
 def _p(*args: object) -> None:
@@ -27,23 +27,7 @@ def _json(payload: object) -> int:
 
 
 # ------------------------------------------------------------------ helpers
-def _endpoint_from_module(module: str, *, lease: str | None, country: str | None):
-    """A module-backed endpoint. Nothing is started: the gateway brings the provider
-    up when the exit comes up, on the providers bridge."""
-    if not providers.is_installed(module):
-        raise providers.ProviderError(f"provider module {module!r} is not installed")
-    _prov, manifest = providers.load(module)
-    if not manifest.runs_container:
-        raise providers.ProviderError(
-            f"{module!r} does not produce its own endpoint; pass an ENDPOINT"
-        )
-    return Endpoint(
-        host=paths.provider_static_ip(module, lease),
-        port=manifest.socks_port,
-        module=module,
-        lease=lease,
-        country=country,
-    )
+_endpoint_from_module = exits.module_endpoint
 
 
 def parse_expose(spec: str) -> tuple[str, int]:
@@ -70,14 +54,12 @@ def _expose_from_args(a: argparse.Namespace) -> tuple[Expose | None, str | None]
             password = sys.stdin.readline().rstrip("\n")
         else:
             password = getpass.getpass(f"password for {a.expose_user} on {bind}:{port}: ")
-        if not password:
-            raise ValueError("an exposed SOCKS5 with a user needs a password")
-    ex = Expose(bind=bind, port=port, username=a.expose_user, has_password=bool(password))
-    if not ex.loopback and not ex.username and not a.expose_open:
-        raise ValueError(
-            f"{ex.address} is reachable from other machines; give it --expose-user, "
-            "or say --expose-open to publish it without a password"
+    try:
+        ex = exits.make_expose(
+            bind, port, username=a.expose_user, password=password, allow_open=a.expose_open
         )
+    except ValueError as exc:
+        raise ValueError(f"{exc} (--expose-user, or --expose-open)") from exc
     return ex, password
 
 

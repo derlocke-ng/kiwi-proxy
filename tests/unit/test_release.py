@@ -46,7 +46,11 @@ def test_manifest_follows_the_kiwi_convention():
     assert not any("#" in value for value in m.values())
     for key in ("ICON", "ABOUT", "INSTALLER"):
         assert (ROOT / m[key]).is_file(), f"{key}={m[key]} does not exist"
+    for shot in m.get("SCREENSHOTS", "").split():
+        assert (ROOT / shot).is_file(), f"screenshot {shot} does not exist"
     assert (ROOT / "LICENSE").is_file()
+    assert "gui" in m["COMPONENTS"].split()
+    assert (ROOT / "data" / "kiwi-proxy.desktop").is_file()
 
 
 def test_the_server_module_carries_the_same_version():

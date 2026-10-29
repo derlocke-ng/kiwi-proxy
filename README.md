@@ -40,6 +40,17 @@ kiwi-proxy setup             # gateway image, DNS data, provider module images
 
 `kiwi install kiwi-fox` brings it along; kiwi-fox's own `setup` runs this one.
 
+## The app
+
+`kiwi-proxy-gui` ("Kiwi-Proxy" in your app grid) does everything below without a
+terminal: add and edit exits — a SOCKS5 you were given or a provider module — bring
+them up and down, offer one as a SOCKS5 port on this computer and copy its address,
+check what the world sees through it, see who joined a gateway, set up modules.
+
+![Exits](data/screenshots/1-exits.png)
+
+![A new exit](data/screenshots/2-new-exit.png)
+
 ## Use
 
 ```
@@ -122,8 +133,8 @@ write one.
 
 ## Requirements
 
-Rootless Podman, Python 3.12+ with pydantic. `secret-tool` when there is a desktop
-keyring. kiwi-server machines need only their stack runtime: they pull the gateway
+Rootless Podman, Python 3.12+ with pydantic. GTK 4 + libadwaita (PyGObject) for
+the app. `secret-tool` when there is a desktop keyring. kiwi-server machines need only their stack runtime: they pull the gateway
 image from `ghcr.io/derlocke-ng/kiwi-proxy/gateway`.
 
 ## License

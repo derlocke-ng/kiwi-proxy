@@ -13,7 +13,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from . import paths, secrets
+from . import paths, providers, secrets
 from .models import DnsConfig, Endpoint, Exit, Expose, ProviderRecord
 
 
@@ -31,6 +31,46 @@ def _write_json(path: Path, payload: str) -> None:
 def valid_name(name: str) -> bool:
     """Anything a person would type, but never a path or an option."""
     return bool(name.strip()) and "/" not in name and not name.startswith("-") and len(name) <= 64
+
+
+def module_endpoint(module: str, *, lease: str | None, country: str | None) -> Endpoint:
+    """A module-backed endpoint. Nothing is started: the gateway brings the provider
+    up when the exit comes up, on the providers bridge."""
+    if not providers.is_installed(module):
+        raise providers.ProviderError(f"provider module {module!r} is not installed")
+    _prov, manifest = providers.load(module)
+    if not manifest.runs_container:
+        raise providers.ProviderError(
+            f"{module!r} does not produce its own endpoint; give an endpoint"
+        )
+    return Endpoint(
+        host=paths.provider_static_ip(module, lease),
+        port=manifest.socks_port,
+        module=module,
+        lease=lease or None,
+        country=country or None,
+    )
+
+
+def make_expose(
+    bind: str, port: int, *, username: str | None, password: str | None, allow_open: bool
+) -> Expose:
+    """A host listener, checked the same way for the CLI and the GUI: a port, a
+    password whenever there is a user, and a password — or an explicit yes — for
+    an address other machines can reach."""
+    if not 0 < port < 65536:
+        raise ValueError(f"{port} is not a port")
+    if username and not password:
+        raise ValueError("a host port with a user needs a password")
+    ex = Expose(
+        bind=bind or "127.0.0.1", port=port, username=username or None, has_password=bool(password)
+    )
+    if not ex.loopback and not ex.username and not allow_open:
+        raise ValueError(
+            f"{ex.address} is reachable from other machines; protect it with a user and "
+            "password, or say that it may be open"
+        )
+    return ex
 
 
 def create(

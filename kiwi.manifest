@@ -6,7 +6,7 @@ AUTHOR=derlocke-ng
 HOMEPAGE=https://github.com/derlocke-ng/kiwi-proxy
 LICENSE=GPL-3.0-or-later
 
-COMPONENTS=cli service
+COMPONENTS=cli gui service
 CATEGORY=Security
 TAGS=proxy socks5 vpn tor mysterium 9proxy gateway killswitch podman kiwi-fox kiwi-pentesting
 
@@ -14,11 +14,13 @@ SCOPES=user
 
 # the app's own icon, from kiwi-icons (svg/classic/kiwi-proxy.svg at c4a6a92)
 ICON=data/kiwi-proxy.svg
+SCREENSHOTS=data/screenshots/1-exits.png data/screenshots/2-new-exit.png data/screenshots/3-details.png
 ABOUT=README.md
 
 # Checked with `command -v` before installing. The gateway image is built by
 # `kiwi-proxy setup` on first run, not at install time. secret-tool is used when
-# present; without it passwords go to 0600 files (headless machines).
+# present; without it passwords go to 0600 files (headless machines). The GUI
+# needs GTK 4 + libadwaita (PyGObject); KIWI_GUI=0 installs without it.
 DEPENDS=podman python3
 
 INSTALLER=install.sh

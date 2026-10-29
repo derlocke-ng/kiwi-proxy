@@ -19,3 +19,7 @@ The proxy engine kiwi-fox carried, split out into its own app.
 - **kiwi-server module** (`server-module/kiwi-proxy`): exits for the mesh on a node
   or the master; the gateway image is published to GHCR for it.
 - Consumer API for kiwi-fox and kiwi-pentesting (`docs/consumers.md`).
+- **The app** (`kiwi-proxy-gui`, GTK 4 + libadwaita): exits with their state, bring
+  up/take down, add/edit (endpoint or provider module, host port and password, DNS,
+  Tor Browser passthrough), details with the gateway's members, copy the host
+  proxy address, provider modules and their images, setup.

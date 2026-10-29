@@ -6,6 +6,7 @@
 #
 #   KIWI_SCOPE  user        KIWI_PREFIX  ~/.local
 #   KIWI_ACTION install|update|uninstall
+#   KIWI_GUI    0 on a headless machine
 #   KIWI_PURGE  1 only when the user asked for --purge
 #
 # Consumers (kiwi-fox, kiwi-pentesting) import the package from
@@ -28,6 +29,18 @@ if [[ "$KIWI_SCOPE" != user ]]; then
     exit 0
 fi
 
+# The launcher's icon is replaced on update (it comes from kiwi-icons), and an
+# icon-theme.cache that predates it keeps the old one in the app grid until the
+# cache is rebuilt — the same refresh kiwi-updater does for its own icon.
+refresh_desktop_caches() {
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -qtf "$KIWI_PREFIX/share/icons/hicolor" 2>/dev/null || true
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q "$KIWI_PREFIX/share/applications" 2>/dev/null || true
+    fi
+}
+
 do_install() {
     mkdir -p "$LIBDIR" "$KIWI_PREFIX/bin"
     rm -rf "$LIBDIR/kiwi_proxy" "$LIBDIR/containers" "$LIBDIR/server-module"
@@ -41,6 +54,20 @@ export PYTHONPATH="$LIBDIR\${PYTHONPATH:+:\$PYTHONPATH}"
 exec python3 -m kiwi_proxy "\$@"
 EOW
     chmod +x "$KIWI_PREFIX/bin/$APP"
+
+    if [[ "${KIWI_GUI:-1}" == 1 ]]; then
+        cat > "$KIWI_PREFIX/bin/$APP-gui" <<EOW
+#!/usr/bin/env bash
+export PYTHONPATH="$LIBDIR\${PYTHONPATH:+:\$PYTHONPATH}"
+exec python3 -m kiwi_proxy.ui "\$@"
+EOW
+        chmod +x "$KIWI_PREFIX/bin/$APP-gui"
+        install -Dm644 "$SRC/data/$APP.desktop" \
+            "$KIWI_PREFIX/share/applications/$APP.desktop" 2>/dev/null || true
+        install -Dm644 "$SRC/data/$APP.svg" \
+            "$KIWI_PREFIX/share/icons/hicolor/scalable/apps/$APP.svg" 2>/dev/null || true
+        refresh_desktop_caches
+    fi
 
     # Resolver stamps and blocklists kiwi-fox downloaded before the split are the
     # same files; take them rather than fetching them again.
@@ -94,6 +121,7 @@ EOW
     echo "    $APP setup"
     echo
     echo "Then:  $APP add work socks5://host:port --expose 1081   &&   $APP up work"
+    echo "   or: $APP-gui   (\"Kiwi-Proxy\" in your app grid)"
 }
 
 do_update() { do_install; }
@@ -102,7 +130,10 @@ do_uninstall() {
     systemctl --user disable --now "$APP-blocklists.timer" 2>/dev/null || true
     rm -f "$UNITDIR/$APP-blocklists."{service,timer} "$UNITDIR/$APP@.service"
     systemctl --user daemon-reload 2>/dev/null || true
-    rm -f "$KIWI_PREFIX/bin/$APP"
+    rm -f "$KIWI_PREFIX/bin/$APP" "$KIWI_PREFIX/bin/$APP-gui"
+    rm -f "$KIWI_PREFIX/share/applications/$APP.desktop"
+    rm -f "$KIWI_PREFIX/share/icons/hicolor/scalable/apps/$APP.svg"
+    refresh_desktop_caches
     rm -rf "$LIBDIR"
 
     # An ordinary uninstall leaves exits, module state and secrets alone, so

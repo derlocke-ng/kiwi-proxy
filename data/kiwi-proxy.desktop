@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Kiwi-Proxy
+GenericName=Proxy and VPN exit manager
+Comment=Sealed SOCKS5/VPN exits in rootless Podman, for browsers, tools and host apps
+Exec=kiwi-proxy-gui
+Icon=kiwi-proxy
+Terminal=false
+Categories=Network;Security;
+StartupNotify=true
+StartupWMClass=kiwi-proxy
+Keywords=proxy;socks5;vpn;tor;gateway;killswitch;exit;
