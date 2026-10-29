@@ -162,7 +162,7 @@ trap cleanup SIGTERM SIGINT
 
 log "ready — the namespace is sealed"
 
-# Hold the namespace open, and die if either service dies so the browser loses
+# Hold the namespace open, and die if either service dies so every member loses
 # its route rather than silently running without one.
 while true; do
     sleep 5

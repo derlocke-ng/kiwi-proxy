@@ -136,7 +136,7 @@ def test_spec_joins_the_bridge_for_a_local_provider(new_exit):
 
 def test_a_consumer_adds_its_own_labels(new_exit):
     # kiwi-fox keeps app=kiwi-fox and kiwi-fox.role=gateway on its gateways, which
-    # is what kiwi-pentesting discovers today.
+    # is what kiwi-pentesting discovers as a fallback.
     spec = gateway.gateway_spec(
         new_exit(), "203.0.113.9", labels={"app": "kiwi-fox", "kiwi-fox.role": "gateway"}
     )

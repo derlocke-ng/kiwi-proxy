@@ -147,10 +147,10 @@ class Inbound:
 
 
 def combine_user(token: str, client_user: str) -> str:
-    """The upstream username for a passthrough connection: the profile token,
+    """The upstream username for a passthrough connection: the exit token,
     then the client's own SOCKS username (Tor Browser's first-party domain),
     so Tor's IsolateSOCKSAuth keeps a circuit per site while the token still
-    isolates profiles. RFC 1929 caps the username at 255 bytes, and the client
+    isolates exits. RFC 1929 caps the username at 255 bytes, and the client
     one can be a long domain, so an over-length pair folds to a hash — still
     deterministic (same site -> same circuit) and collision-resistant."""
     combined = f"{token}:{client_user}"
@@ -299,8 +299,8 @@ async def handle(
             return
 
         # The upstream credentials for this one connection: in passthrough with
-        # client credentials, the profile token plus the client's own username
-        # (so Tor's per-site isolation survives); otherwise the profile pair.
+        # client credentials, the exit token plus the client's own username
+        # (so Tor's per-site isolation survives); otherwise the exit's pair.
         if client_user is not None and up.user:
             up_user: str | None = combine_user(up.user, client_user)
             up_password: str | None = client_pass
@@ -444,9 +444,9 @@ async def main() -> int:
         user, password = read_credentials(creds)
         in_user, in_password = read_credentials(os.environ.get("KF_EXPOSE_CREDS_FILE", ""))
     if mode == PASSTHROUGH and not user:
-        # Passthrough always prepends the profile token; without one a client
+        # Passthrough always prepends the exit token; without one a client
         # could land in any bucket, so refuse to start rather than isolate nothing.
-        LOG.error("passthrough mode needs a profile token in the credentials file")
+        LOG.error("passthrough mode needs an exit token in the credentials file")
         return 2
     blocklist = Blocklist(os.environ["KF_BLOCKLIST"]) if os.environ.get("KF_BLOCKLIST") else None
     up = Upstream(host, port, user, password, mode, blocklist)

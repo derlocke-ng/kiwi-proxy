@@ -220,7 +220,7 @@ def cmd_set(a: argparse.Namespace) -> int:
     exits.save(ex)
     _p(
         f"{ex.name} saved"
-        + (" — `kiwi-proxy up --replace` applies it now" if gateway.is_up(ex.id) else "")
+        + (f" — `kiwi-proxy up --replace {ex.name}` applies it now" if gateway.is_up(ex.id) else "")
     )
     return 0
 
@@ -361,7 +361,11 @@ def _module_status_line(name: str) -> tuple[str, bool]:
     ctx = providers.context_for(name, manifest)
     status = prov.status(ctx)
     missing = [b for b in prov.requirements() if not shutil.which(b)]
-    img = "image yes" if status.image_present else "image MISSING (run `kiwi-proxy module setup`)"
+    img = (
+        "image yes"
+        if status.image_present
+        else f"image MISSING (run `kiwi-proxy module setup {name}`)"
+    )
     run = "running" if status.running else "idle"
     req = f" · missing: {', '.join(missing)}" if missing else ""
     ok = status.image_present and not missing

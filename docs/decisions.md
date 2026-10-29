@@ -28,8 +28,9 @@ setup anyway, moved to `kiwi-proxy/…`.
 
 **The `app` label is the consumer's.** kiwi-proxy finds its containers by
 `kiwi-proxy.role`. `app` stays whatever the consumer sets, so kiwi-fox's gateways
-are still `app=kiwi-fox`, `kiwi-fox.role=gateway` — what kiwi-pentesting discovers
-today — without kiwi-pentesting changing first.
+are still `app=kiwi-fox`, `kiwi-fox.role=gateway`, which kept kiwi-pentesting
+working through the split; it now finds gateways by `kiwi-proxy.role` and keeps
+kiwi-fox's labels as its fallback.
 
 **A gateway is shared, so it is reused, not replaced.** Inside kiwi-fox every
 launch replaced the gateway, which was fine with one member. With several (a browser
