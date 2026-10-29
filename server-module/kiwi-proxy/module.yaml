@@ -6,7 +6,7 @@ schema_version: "1.0"
 module:
   name: kiwi-proxy
   title: kiwi-proxy exits
-  version: 0.1.0
+  version: 0.2.0
   description: "Sealed SOCKS5 exits for mesh clients — each one a kiwi-proxy gateway whose only route is one upstream (a VPN provider's SOCKS5, a residential proxy, this stack's Tor), published on the host's mesh address"
   category: network
   node_types: [master, node]
@@ -66,7 +66,8 @@ settings:
       resolved once in the container before it seals), or via + port (another module
       of this stack, e.g. tor), and expose (the host port). Optional: username /
       password for the upstream, expose_user / expose_password for the host port,
-      ip (the gateway's own address on the stack network).
+      ip (the gateway's own address on the stack network), adblock (false: this
+      exit's names are not filtered).
     required: true
   - key: bind
     label: Host address the exits are published on
@@ -76,6 +77,15 @@ settings:
     type: bool
     label: Open the exit ports in the host firewall
     default: true
+  - key: adblock
+    type: bool
+    label: Block ads and trackers
+    help: "Names on the blocklists are refused at the gateway. The lists are fetched through each exit itself, daily."
+    default: true
+  - key: blocklist_urls
+    label: Blocklists
+    help: "Space separated, in dnscrypt-proxy's bare-name format (oisd domainswild2). Each gateway holds the list in memory, so the small one is the default."
+    default: https://small.oisd.nl/domainswild2
   - key: ip_offset
     type: int
     group: Advanced

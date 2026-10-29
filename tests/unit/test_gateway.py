@@ -431,3 +431,59 @@ def test_down_without_podman_only_forgets_the_hold(new_exit, monkeypatch):
     gateway.hold(new_exit().id)
     gateway.down(new_exit().id)  # must not try to run podman
     assert not gateway.held(new_exit().id)
+
+
+# ------------------------------------------------------------------ ad-block
+def test_exits_with_different_lists_get_their_own_merged_file(new_exit, monkeypatch):
+    monkeypatch.setattr(dns, "load_stamps", lambda: {"google": "sdns://x"})
+    d = paths.blocklists_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "oisd-big.txt").write_text("big.example\n")
+    (d / "oisd-nsfw.txt").write_text("nsfw.example\n")
+    a = new_exit()
+    b = new_exit(dns=DnsConfig(blocklists=["oisd-big", "oisd-nsfw"]))
+    gateway.write_resolver_config(a)
+    gateway.write_resolver_config(b)
+    assert (d / "blocked-names.txt").read_text() == "big.example\n"  # the default keeps its name
+    both = d / "blocked-names-oisd-big+oisd-nsfw.txt"
+    assert both.read_text() == "big.example\nnsfw.example\n"
+    assert gateway.blocklist_in_gateway(b) == f"/blocklist/{both.name}"
+
+
+def test_the_forwarder_blocks_too_in_resolver_mode(new_exit):
+    spec = gateway.gateway_spec(new_exit(), "1.2.3.4")
+    assert spec.env["KF_BLOCKLIST"] == "/blocklist/blocked-names.txt"
+
+
+def test_no_name_filtering_without_lists_or_in_remote_mode(new_exit):
+    # remote means the names go to the exit untouched — Tor Browser's exits are remote
+    assert (
+        "KF_BLOCKLIST"
+        not in gateway.gateway_spec(new_exit(dns=DnsConfig(blocklists=[])), "1.2.3.4").env
+    )
+    assert (
+        "KF_BLOCKLIST"
+        not in gateway.gateway_spec(new_exit(dns=DnsConfig(mode="remote")), "1.2.3.4").env
+    )
+
+
+def test_dns_update_refreshes_every_exits_lists(monkeypatch, capsys):
+    from kiwi_proxy import cli, exits
+    from kiwi_proxy.models import Endpoint
+
+    exits.create("a", Endpoint(host="h", port=1))
+    exits.create("b", Endpoint(host="h", port=2), dns=DnsConfig(blocklists=["oisd-small"]))
+    fetched = []
+
+    def fetch(name):
+        fetched.append(name)
+        path = paths.blocklists_dir() / f"{name}.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{name}.example\n")
+        return path
+
+    monkeypatch.setattr(dns, "fetch_blocklist", fetch)
+    assert cli.main(["dns", "update"]) == 0
+    assert sorted(fetched) == ["oisd-big", "oisd-small"]
+    assert (paths.blocklists_dir() / "blocked-names.txt").exists()
+    assert (paths.blocklists_dir() / "blocked-names-oisd-small.txt").exists()

@@ -15,6 +15,13 @@ Two listeners, one relay:
                                   username/password (RFC 1929) when
                                   KF_EXPOSE_CREDS_FILE names a credentials file
 
+KF_BLOCKLIST names a list of blocked domains (dnscrypt-proxy's bare-name format,
+the same file the resolver reads): a CONNECT by name to one of them, or to a name
+under one, is refused before anything leaves. Members that resolve through the
+gateway's resolver are already covered by it; this covers clients that hand the
+name to the proxy instead — socks5h on the host listener. The file is re-read when
+it changes, so the daily update reaches a running gateway.
+
 KF_SOCKS_AUTH picks what an unguarded listener does with client credentials:
 "inject" (answer no-auth, send the exit's pair) or "passthrough" (Tor Browser:
 accept the client's per-site credentials and send them upstream behind the exit's
@@ -41,6 +48,7 @@ import os
 import socket
 import struct
 import sys
+import time
 from pathlib import Path
 
 LOG = logging.getLogger("forwarder")
@@ -57,6 +65,48 @@ INJECT = "inject"
 PASSTHROUGH = "passthrough"
 
 
+class Blocklist:
+    """Blocked domains, re-read when the file changes (checked at most once a
+    minute). A missing or unreadable file blocks nothing rather than everything:
+    the firewall is the guarantee, this is ad-blocking."""
+
+    RECHECK = 60.0
+
+    def __init__(self, path: str) -> None:
+        self.path = Path(path)
+        self.entries: set[str] = set()
+        self._mtime: float | None = None
+        self._checked = float("-inf")
+        self.refresh(force=True)
+
+    def refresh(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._checked < self.RECHECK:
+            return
+        self._checked = now
+        try:
+            mtime = self.path.stat().st_mtime
+        except OSError:
+            return
+        if mtime == self._mtime:
+            return
+        entries = set()
+        try:
+            for raw in self.path.read_text(errors="replace").splitlines():
+                entry = raw.strip().lower()
+                if entry and not entry.startswith(("#", "!")):
+                    entries.add(entry.removeprefix("*."))
+        except OSError:
+            return
+        self.entries, self._mtime = entries, mtime
+        LOG.info("blocklist: %d names from %s", len(entries), self.path)
+
+    def blocks(self, name: str) -> bool:
+        self.refresh()
+        labels = name.lower().rstrip(".").split(".")
+        return any(".".join(labels[i:]) in self.entries for i in range(len(labels)))
+
+
 class Upstream:
     def __init__(
         self,
@@ -65,10 +115,12 @@ class Upstream:
         user: str | None,
         password: str | None,
         mode: str = INJECT,
+        blocklist: Blocklist | None = None,
     ) -> None:
         self.host, self.port = host, port
         self.user, self.password = user or None, password or None
         self.mode = mode
+        self.blocklist = blocklist
 
     @property
     def authed(self) -> bool:
@@ -280,6 +332,11 @@ async def handle(
             await deny(client_w, REP_CMD)
             return
 
+        if atyp == ATYP_DOMAIN and up.blocklist and up.blocklist.blocks(host):
+            LOG.debug("blocked %s", host)
+            await deny(client_w, REP_NOT_ALLOWED)
+            return
+
         try:
             up_r, up_w = await asyncio.wait_for(
                 asyncio.open_connection(up.host, up.port), timeout=20
@@ -391,7 +448,8 @@ async def main() -> int:
         # could land in any bucket, so refuse to start rather than isolate nothing.
         LOG.error("passthrough mode needs a profile token in the credentials file")
         return 2
-    up = Upstream(host, port, user, password, mode)
+    blocklist = Blocklist(os.environ["KF_BLOCKLIST"]) if os.environ.get("KF_BLOCKLIST") else None
+    up = Upstream(host, port, user, password, mode, blocklist)
     server = await asyncio.start_server(
         lambda r, w: handle(r, w, up), "127.0.0.1", listen_port, reuse_address=True
     )

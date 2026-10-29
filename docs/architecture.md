@@ -44,6 +44,25 @@ plaintext DNS.
 5. **measure** — a provider exit the host cannot reach is measured from inside,
    through the forwarder (`kf-exitinfo`).
 
+## DNS and ad-blocking
+
+An exit's `dns.mode` is `resolver` (the default) or `remote`.
+
+- **resolver** — dnscrypt-proxy at 127.0.0.2 inside the gateway, DoH upstream
+  through the forwarder, `blocked_names_file` = the exit's merged blocklist. The
+  same list is handed to the forwarder (`KF_BLOCKLIST`), which refuses a CONNECT by
+  name to a listed domain or a name under it (`REP_NOT_ALLOWED`) — that covers
+  clients that never ask the resolver: `socks5h` on the host port.
+- **remote** — no resolver, no list: every name goes to the exit as is. Tor
+  Browser's exits are remote.
+
+Each set of lists has its own merged file in `blocklists/` (`blocked-names.txt` for
+the default oisd big, `blocked-names-<lists>.txt` otherwise), replaced atomically
+by `kiwi-proxy dns update`, which refreshes every list any exit uses. The directory
+is mounted, not the file, so a running gateway sees the new one; the forwarder
+re-reads it when its mtime changes. A kiwi-server gateway has no host-side lists:
+`KF_BLOCKLIST_URLS` makes it fetch them through its own exit (`kf-exitinfo --out`).
+
 ## Who keeps it up
 
 - `release(exit_id, ignore=…)` — a consumer is done. The gateway goes unless another

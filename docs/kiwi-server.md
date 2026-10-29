@@ -43,11 +43,18 @@ hosts:
 | `username` / `password` | the upstream's credentials |
 | `expose_user` / `expose_password` | what the host port demands |
 | `ip` | the gateway's own address on the stack network (default: `.200`, `.201`, … from `ip_offset`) |
+| `adblock` | `false`: no ad-blocking for this exit |
 
 Module settings: `bind` (host address the exits are published on; default the
 mesh address `vpn_ip`, `127.0.0.1` keeps them on the host), `open_firewall`
-(default true: the exit ports are opened in the host firewall), `ip_offset`
-(default 200), `image`.
+(default true: the exit ports are opened in the host firewall), `adblock` (default
+true), `blocklist_urls` (default oisd small), `ip_offset` (default 200), `image`.
+
+Ad-blocking on a server: nothing on the machine downloads lists, so each gateway
+fetches `blocklist_urls` **through its own exit** after it seals, then daily (every
+ten minutes until the first fetch works), and its forwarder refuses CONNECTs to
+listed names and names under them. Each gateway holds its list in memory, which is
+why the small list is the default here.
 
 ## What it renders
 
@@ -56,7 +63,8 @@ One `kn-proxy-<name>` service per exit (quadlet or compose): `cap_drop: ALL` plu
 published on `bind`. Credentials are one root-owned 0600 file,
 `<docker_dir>/kn-proxy/credentials`, mounted read-only; each gateway reads its own
 row by `KF_EXIT_NAME`. No password is in a unit or in the environment. DNS is
-remote (names go to the exit; use `socks5h`).
+remote (names go to the exit — use `socks5h`), filtered by the forwarder when
+`adblock` is on.
 
 ## Notes
 

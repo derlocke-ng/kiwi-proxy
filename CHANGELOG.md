@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0
+
+- **Ad-blocking everywhere a name is seen**: the forwarder refuses blocked names
+  for socks5h clients on the host port, not only the in-gateway resolver; each set
+  of lists gets its own merged file (one shared file let exits overwrite each
+  other's lists); `dns update` refreshes every list an exit uses; kiwi-server
+  gateways fetch their lists through their own exit (`adblock`, `blocklist_urls`);
+  `--no-blocklist`.
+- **The app** (`kiwi-proxy-gui`, GTK 4 + libadwaita): exits with their state, bring
+  up/take down, add/edit (endpoint or provider module, host port and password, DNS,
+  Tor Browser passthrough), details with the gateway's members, copy the host
+  proxy address, provider modules and their images, setup. Choose blocklists per
+  exit, test an upstream before saving, duplicate an exit.
+- Ships its own icon from kiwi-icons (`svg/classic/kiwi-proxy.svg`).
+
 ## 0.1.0
 
 The proxy engine kiwi-fox carried, split out into its own app.
@@ -19,7 +34,3 @@ The proxy engine kiwi-fox carried, split out into its own app.
 - **kiwi-server module** (`server-module/kiwi-proxy`): exits for the mesh on a node
   or the master; the gateway image is published to GHCR for it.
 - Consumer API for kiwi-fox and kiwi-pentesting (`docs/consumers.md`).
-- **The app** (`kiwi-proxy-gui`, GTK 4 + libadwaita): exits with their state, bring
-  up/take down, add/edit (endpoint or provider module, host port and password, DNS,
-  Tor Browser passthrough), details with the gateway's members, copy the host
-  proxy address, provider modules and their images, setup.

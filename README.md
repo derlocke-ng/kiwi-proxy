@@ -51,6 +51,8 @@ check what the world sees through it, see who joined a gateway, set up modules.
 
 ![A new exit](data/screenshots/2-new-exit.png)
 
+![DNS and ad-blocking](data/screenshots/4-dns-adblock.png)
+
 ## Use
 
 ```
@@ -95,6 +97,25 @@ podman run --rm --network "container:$(kiwi-proxy name work)" \
 `kiwi-proxy ps` lists every gateway, whichever app started it. A gateway a consumer
 brought up goes when the last member leaves; one brought up with `kiwi-proxy up`
 stays until `kiwi-proxy down`.
+
+### DNS and ad-blocking
+
+By default an exit resolves names in its own gateway (dnscrypt-proxy, DoH through
+the same exit) and refuses names on its blocklists — oisd big unless you pick
+others (`--blocklist oisd-small`, `--blocklist oisd-nsfw`, `--no-blocklist`, or the
+switches in the app). The block applies wherever a name shows up:
+
+| Who | How it is blocked |
+| --- | --- |
+| a container that joined the gateway | its resolver (`/etc/resolv.conf` → 127.0.0.2) answers REFUSED |
+| an app on the host port with `socks5h://` | the forwarder refuses the CONNECT for that name |
+| a kiwi-server exit | the gateway fetches its lists through its own exit, daily, and the forwarder refuses |
+
+`--dns remote` hands every name to the exit untouched — no resolver, no
+ad-blocking. That is what Tor Browser needs, and what kiwi-fox sets for it. An app
+using plain `socks5://` (no `h`) resolves names itself, outside the exit: use
+`socks5h`. The lists refresh daily (`kiwi-proxy-blocklists.timer`, or
+`kiwi-proxy dns update`); running gateways pick the new list up by themselves.
 
 ### Tor Browser
 

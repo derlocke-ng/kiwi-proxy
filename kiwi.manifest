@@ -1,7 +1,7 @@
 # kiwi.manifest — app metadata for kiwi-updater
 NAME=kiwi-proxy
 DESCRIPTION=Sealed SOCKS5/VPN exits in rootless Podman — for browsers, pentest tools, host apps and kiwi-server machines
-VERSION=0.1.0
+VERSION=0.2.0
 AUTHOR=derlocke-ng
 HOMEPAGE=https://github.com/derlocke-ng/kiwi-proxy
 LICENSE=GPL-3.0-or-later
@@ -14,7 +14,7 @@ SCOPES=user
 
 # the app's own icon, from kiwi-icons (svg/classic/kiwi-proxy.svg at c4a6a92)
 ICON=data/kiwi-proxy.svg
-SCREENSHOTS=data/screenshots/1-exits.png data/screenshots/2-new-exit.png data/screenshots/3-details.png
+SCREENSHOTS=data/screenshots/1-exits.png data/screenshots/2-new-exit.png data/screenshots/3-details.png data/screenshots/4-dns-adblock.png
 ABOUT=README.md
 
 # Checked with `command -v` before installing. The gateway image is built by

@@ -118,3 +118,13 @@ def test_an_exit_without_a_host_port_is_refused(tmp_path, monkeypatch, capsys):
         return
     assert code
     assert "expose" in capsys.readouterr().err
+
+
+def test_ad_blocking_is_fetched_through_each_exit(tmp_path, monkeypatch):
+    exits = EXITS.replace("expose: 1081 }", "expose: 1081, adblock: false }")
+    _code, out = render(tmp_path, monkeypatch, exits=exits)
+    resi = (out / "quadlets" / "kn-proxy-resi.container").read_text()
+    assert "Environment=KF_BLOCKLIST=/run/kf/blocked-names.txt" in resi
+    assert "Environment=KF_BLOCKLIST_URLS=https://small.oisd.nl/domainswild2" in resi
+    se = (out / "quadlets" / "kn-proxy-se.container").read_text()
+    assert "KF_BLOCKLIST" not in se  # adblock: false on that exit

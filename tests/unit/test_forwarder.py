@@ -417,3 +417,73 @@ def test_main_serves_the_member_and_the_host_listener(tmp_path):
     _creds, member_reply, host_reply = asyncio.run(scenario())
     assert member_reply == bytes([5, 0])
     assert host_reply == bytes([5, 0xFF])
+
+
+# ------------------------------------------------------------------ blocklist
+def _blocklist(tmp_path, text="# oisd\nads.example\n*.tracker.example\n\n"):
+    path = tmp_path / "blocked-names.txt"
+    path.write_text(text)
+    return fwd.Blocklist(str(path))
+
+
+def test_blocklist_uses_the_bare_name_rule(tmp_path):
+    bl = _blocklist(tmp_path)
+    assert bl.blocks("ads.example") and bl.blocks("deep.sub.ads.example")
+    assert bl.blocks("ADS.Example.") and bl.blocks("x.tracker.example")
+    assert not bl.blocks("notads.example") and not bl.blocks("example")
+
+
+def test_blocklist_follows_the_file(tmp_path, monkeypatch):
+    import os
+
+    bl = _blocklist(tmp_path)
+    (tmp_path / "blocked-names.txt").write_text("other.example\n")
+    os.utime(tmp_path / "blocked-names.txt", (1, 1))  # a different mtime, whatever the clock
+    monkeypatch.setattr(fwd.Blocklist, "RECHECK", 0.0)
+    assert bl.blocks("other.example") and not bl.blocks("ads.example")
+
+
+def test_a_missing_blocklist_blocks_nothing(tmp_path):
+    assert not fwd.Blocklist(str(tmp_path / "absent")).blocks("ads.example")
+
+
+def test_the_same_rule_as_the_host_side_matcher(tmp_path):
+    from kiwi_proxy import dns
+
+    bl = _blocklist(tmp_path)
+    for name in ("ads.example", "a.ads.example", "notads.example", "tracker.example"):
+        assert bl.blocks(name) == dns.blocked(name, bl.entries), name
+
+
+def test_a_blocked_name_is_refused_before_anything_leaves(tmp_path):
+    async def go():
+        upstream = FakeUpstream()
+        up_port = await upstream.start()
+        up = fwd.Upstream("127.0.0.1", up_port, None, None, blocklist=_blocklist(tmp_path))
+        server = await asyncio.start_server(lambda r, w: fwd.handle(r, w, up), "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+
+        async def connect(target: bytes, atyp: int = 3) -> int:
+            r, w = await asyncio.open_connection("127.0.0.1", port)
+            w.write(b"\x05\x01\x00")
+            await r.readexactly(2)
+            head = bytes([5, 1, 0, atyp]) + (bytes([len(target)]) if atyp == 3 else b"")
+            w.write(head + target + struct.pack("!H", 443))
+            await w.drain()
+            reply = await r.readexactly(4)
+            w.close()
+            return reply[1]
+
+        codes = (
+            await connect(b"pixel.ads.example"),
+            await connect(b"wikipedia.org"),
+            await connect(socket.inet_aton("93.184.216.34"), atyp=1),  # names only
+        )
+        server.close()
+        upstream.server.close()  # type: ignore[union-attr]
+        return codes, upstream.requests
+
+    (blocked, allowed, by_ip), requests = asyncio.run(go())
+    assert blocked == fwd.REP_NOT_ALLOWED
+    assert allowed == 0 and by_ip == 0
+    assert [r[1] for r in requests] == [b"wikipedia.org", socket.inet_aton("93.184.216.34")]

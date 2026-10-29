@@ -28,6 +28,10 @@ services:
       - KF_EXPOSE_PORT=1081
       - KF_DNS_MODE=remote
       - KF_CREDS_TABLE=/run/kf/credentials
+{% if adblock and e.adblock is not false and blocklist_urls %}
+      - KF_BLOCKLIST=/run/kf/blocked-names.txt
+      - KF_BLOCKLIST_URLS={{ blocklist_urls }}
+{% endif %}
     volumes:
       - {{ docker_dir }}/{{ container_prefix }}-proxy/credentials:/run/kf/credentials:ro,z
     networks:

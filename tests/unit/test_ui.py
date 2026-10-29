@@ -158,3 +158,82 @@ def test_the_window_starts_empty():
     from kiwi_proxy.ui.window import Window
 
     assert Window(application=None).stack.get_visible_child_name() == "empty"
+
+
+def test_blocklists_are_chosen_per_exit():
+    ed = _editor()
+    ed.name_row.set_text("x")
+    ed.endpoint_row.set_text("10.64.0.1:1080")
+    assert ed.collect()["dns"].blocklists == ["oisd-big"]  # the default, ticked
+    assert ed.collect()["dns"].upstream == "google"  # the same default as the CLI
+    ed.list_rows["oisd-big"].set_active(False)
+    ed.list_rows["oisd-nsfw"].set_active(True)
+    assert ed.collect()["dns"].blocklists == ["oisd-nsfw"]
+    ed.dns_row.set_selected(1)  # remote: names go to the exit, nothing to filter here
+    assert not ed.list_rows["oisd-nsfw"].get_visible() and not ed.upstream_row.get_visible()
+
+
+def test_editing_shows_the_exits_lists():
+    from kiwi_proxy.models import DnsConfig
+
+    ex = exits.create("x", Endpoint(host="h", port=1), dns=DnsConfig(blocklists=[]))
+    ed = _editor(ex)
+    assert not any(row.get_active() for row in ed.list_rows.values())
+    assert ed.collect()["dns"].blocklists == []
+
+
+def test_testing_a_plain_upstream(monkeypatch):
+    import datetime as dt
+
+    from gi.repository import GLib
+
+    from kiwi_proxy import endpoint
+    from kiwi_proxy.models import ExitInfo
+
+    seen = {}
+
+    def preflight(ep, password=None):
+        seen["ep"], seen["pw"] = ep, password
+        return ExitInfo(
+            ip="198.51.100.7", country="SE", city="Stockholm", seen=dt.datetime.now(dt.UTC)
+        )
+
+    monkeypatch.setattr(endpoint, "preflight", preflight)
+    ed = _editor()
+    ed.endpoint_row.set_text("socks5://u:pw@10.64.0.1:1080")
+    ed._on_test()
+    ctx = GLib.MainContext.default()
+    for _ in range(200):
+        ctx.iteration(False)
+        if "198.51.100.7" in ed.test_row.get_subtitle():
+            break
+        import time
+
+        time.sleep(0.01)
+    assert ed.test_row.get_subtitle() == "198.51.100.7 SE Stockholm"
+    assert seen["pw"] == "pw" and seen["ep"].host == "10.64.0.1"
+
+
+def test_duplicate_fills_a_new_exit_without_passwords():
+    from kiwi_proxy.ui.dialogs import ExitEditor
+
+    ex = exits.create(
+        "se",
+        Endpoint(host="10.64.0.1", port=1080, username="u", has_password=True),
+        password="pw",
+        expose=Expose(port=1081),
+    )
+    ed = ExitEditor(None, lambda e: None, template=ex)
+    assert ed.ex is None and ed.name_row.get_text() == "se-2"
+    assert int(ed.port_row.get_value()) == 1082
+    assert ed.endpoint_row.get_text() == "socks5://u@10.64.0.1:1080"
+    assert "not copied" in ed.status_label.get_text()
+    form = ed.collect()
+    assert form["password"] is None and form["endpoint"] is not ex.endpoint
+
+
+def test_the_row_menu_has_duplicate():
+    from kiwi_proxy.ui.window import Window
+
+    win = Window(application=None)
+    assert win.lookup_action("duplicate") is not None

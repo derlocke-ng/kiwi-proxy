@@ -14,13 +14,18 @@ from ..models import DnsConfig  # noqa: E402
 from . import worker  # noqa: E402
 
 DNS_MODES = (
-    ("resolver", "Resolver in the gateway (ad-blocking)"),
-    ("remote", "At the exit (names go to the proxy)"),
+    ("resolver", "Resolved in the gateway"),
+    ("remote", "Resolved by the exit"),
 )
 SOCKS_AUTH = (
     ("inject", "Add the exit's credentials (default)"),
     ("passthrough", "Pass a client's own through (Tor Browser)"),
 )
+BLOCKLIST_LABELS = {
+    "oisd-big": ("Ads, trackers, malware", "oisd big — the full list"),
+    "oisd-small": ("Ads and trackers, lighter", "oisd small — fewer false positives"),
+    "oisd-nsfw": ("Adult content", "oisd nsfw"),
+}
 SOCKS5 = "SOCKS5 endpoint"
 ANY_LEASE = "(the provider's choice)"
 FIRST_HOST_PORT = 1081
@@ -85,9 +90,11 @@ def _dialog_header(primary: str, on_primary) -> tuple[Adw.HeaderBar, Gtk.Button,
 
 class ExitEditor(Adw.Dialog):
     """Add an exit (`ex` None) or change one. Everything is checked the way the CLI
-    checks it (exits.make_expose, endpoint.parse) before anything is saved."""
+    checks it (exits.make_expose, endpoint.parse) before anything is saved.
+    `template` fills a new exit from an existing one (Duplicate); passwords are
+    not copied."""
 
-    def __init__(self, ex, on_saved) -> None:
+    def __init__(self, ex, on_saved, *, template=None) -> None:
         super().__init__(
             title="New exit" if ex is None else f"Edit {ex.name}",
             content_width=600,
@@ -117,6 +124,13 @@ class ExitEditor(Adw.Dialog):
         upstream.add(self.lease_row)
         self.country_row = Adw.EntryRow(title="Country (two letters, optional)")
         upstream.add(self.country_row)
+        self.test_row = Adw.ActionRow(
+            title="Test the upstream", subtitle="ask what the world sees through it"
+        )
+        self.test_button = Gtk.Button(label="Test", valign=Gtk.Align.CENTER)
+        self.test_button.connect("clicked", self._on_test)
+        self.test_row.add_suffix(self.test_button)
+        upstream.add(self.test_row)
         page.add(upstream)
 
         # ---------------------------------------------------------------- host
@@ -151,12 +165,31 @@ class ExitEditor(Adw.Dialog):
         page.add(host)
 
         # ----------------------------------------------------------------- dns
-        dns_group = Adw.PreferencesGroup(title="DNS")
-        self.dns_row = _combo("Names", [label for _k, label in DNS_MODES])
+        dns_group = Adw.PreferencesGroup(
+            title="DNS and ad-blocking",
+            description="The resolver asks its upstream through the exit too. Names on "
+            "the lists are refused — for containers that join the exit and for "
+            "socks5h on the SOCKS5 port alike.",
+        )
+        self.dns_row = _combo(
+            "Names",
+            [label for _k, label in DNS_MODES],
+            subtitle="by the exit: no ad-blocking, as Tor Browser needs",
+        )
+        self.dns_row.connect("notify::selected", self._refresh)
         dns_group.add(self.dns_row)
         self._upstreams = sorted(dns.UPSTREAMS)
-        self.upstream_row = _combo("Resolver upstream", self._upstreams)
+        self.upstream_row = _combo(
+            "Resolver upstream", self._upstreams, self._upstreams.index(DnsConfig().upstream)
+        )
         dns_group.add(self.upstream_row)
+        self.list_rows: dict[str, Adw.SwitchRow] = {}
+        for name in dns.BLOCKLISTS:
+            title, subtitle = BLOCKLIST_LABELS.get(name, (name, ""))
+            row = Adw.SwitchRow(title=title, subtitle=subtitle)
+            row.set_active(name in DnsConfig().blocklists)
+            dns_group.add(row)
+            self.list_rows[name] = row
         page.add(dns_group)
 
         advanced = Adw.PreferencesGroup(title="Advanced")
@@ -186,6 +219,13 @@ class ExitEditor(Adw.Dialog):
 
         if ex is not None:
             self._load(ex)
+        elif template is not None:
+            self._load(template)
+            self.name_row.set_text(f"{template.name}-2")
+            self.port_row.set_value(next_host_port())
+            self.password_row.set_title("Password")
+            if template.endpoint.has_password or (template.expose and template.expose.username):
+                self._say("Passwords are not copied: type them again.", error=False)
         self._on_source()
 
     # ------------------------------------------------------------- the form
@@ -212,6 +252,8 @@ class ExitEditor(Adw.Dialog):
             elif not ex.expose.loopback:
                 self.open_row.set_active(True)
         self.dns_row.set_selected([k for k, _l in DNS_MODES].index(ex.dns.mode))
+        for name, row in self.list_rows.items():
+            row.set_active(name in ex.dns.blocklists)
         if ex.dns.upstream in self._upstreams:
             self.upstream_row.set_selected(self._upstreams.index(ex.dns.upstream))
         self.socks_row.set_selected([k for k, _l in SOCKS_AUTH].index(ex.socks_auth))
@@ -251,10 +293,16 @@ class ExitEditor(Adw.Dialog):
         bind = self.bind_row.get_text().strip() or "127.0.0.1"
         loopback = bind in ("127.0.0.1", "::1", "localhost") or bind.startswith("127.")
         self.open_row.set_visible(exposed and not authed and not loopback)
+        resolver = DNS_MODES[self.dns_row.get_selected()][0] == "resolver"
+        self.upstream_row.set_visible(resolver)
+        for row in self.list_rows.values():
+            row.set_visible(resolver)
+        self.test_row.set_visible(self.module is None)
 
-    def _say(self, text: str) -> None:
+    def _say(self, text: str, *, error: bool = True) -> None:
         self.status_label.set_text(text)
         self.status_label.set_visible(bool(text))
+        (self.status_label.add_css_class if error else self.status_label.remove_css_class)("error")
 
     def collect(self) -> dict:
         """The form as the arguments of an exit, or ValueError saying what is wrong.
@@ -308,7 +356,7 @@ class ExitEditor(Adw.Dialog):
         dns_cfg = DnsConfig(
             mode=DNS_MODES[self.dns_row.get_selected()][0],
             upstream=self._upstreams[self.upstream_row.get_selected()],
-            blocklists=self.ex.dns.blocklists if self.ex else DnsConfig().blocklists,
+            blocklists=[n for n, row in self.list_rows.items() if row.get_active()],
         )
         return {
             "name": name,
@@ -319,6 +367,31 @@ class ExitEditor(Adw.Dialog):
             "dns": dns_cfg,
             "socks_auth": SOCKS_AUTH[self.socks_row.get_selected()][0],
         }
+
+    def _on_test(self, *_args) -> None:
+        """Probe a plain endpoint from here, the way kiwi-fox probes before it
+        creates a profile. A module's exit only exists once it is up."""
+        text = self.endpoint_row.get_text().strip()
+        try:
+            ep, password = endpoint.parse(text)
+        except endpoint.EndpointError as exc:
+            self.test_row.set_subtitle(str(exc))
+            return
+        if password is None and self.ex is not None and text == endpoint_text(self.ex.endpoint):
+            password = secrets.lookup(self.ex.id)
+        self.test_button.set_sensitive(False)
+        self.test_row.set_subtitle("asking…")
+
+        def done(info) -> None:
+            self.test_button.set_sensitive(True)
+            where = " ".join(x for x in (info.country, info.city, info.asn) if x)
+            self.test_row.set_subtitle(f"{info.ip} {where}".rstrip())
+
+        def failed(exc: Exception) -> None:
+            self.test_button.set_sensitive(True)
+            self.test_row.set_subtitle(f"no answer: {exc}")
+
+        worker.run(lambda: endpoint.preflight(ep, password), done, failed)
 
     def _on_save(self, *_args) -> None:
         try:
@@ -411,7 +484,15 @@ class ExitDetails(Adw.Dialog):
                     f"{e.ip} · {e.country or '?'} {e.city or ''} · {e.seen:%Y-%m-%d %H:%M}",
                 )
             )
-        up.add(_row("DNS", f"{ex.dns.mode} · {ex.dns.upstream} · {', '.join(ex.dns.blocklists)}"))
+        up.add(
+            _row(
+                "DNS",
+                dict(DNS_MODES)[ex.dns.mode]
+                + (f" · {ex.dns.upstream}" if ex.dns.mode == "resolver" else ""),
+            )
+        )
+        lists = ", ".join(BLOCKLIST_LABELS.get(n, (n,))[0].lower() for n in ex.dns.blocklists)
+        up.add(_row("Ad-blocking", lists if lists and ex.dns.mode == "resolver" else "off"))
         up.add(_row("Client credentials", dict(SOCKS_AUTH)[ex.socks_auth]))
         page.add(up)
 

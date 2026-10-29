@@ -93,6 +93,7 @@ class Window(Adw.ApplicationWindow):
         for name, handler in (
             ("details", self._act_details),
             ("edit", self._act_edit),
+            ("duplicate", self._act_duplicate),
             ("check", self._act_check),
             ("copy-gateway", self._act_copy_gateway),
             ("delete", self._act_delete),
@@ -180,6 +181,7 @@ class Window(Adw.ApplicationWindow):
         menu = Gio.Menu()
         menu.append("Details", f"win.details::{ex.id}")
         menu.append("Edit…", f"win.edit::{ex.id}")
+        menu.append("Duplicate", f"win.duplicate::{ex.id}")
         menu.append("Check the exit", f"win.check::{ex.id}")
         menu.append("Copy gateway name", f"win.copy-gateway::{ex.id}")
         menu.append("Delete", f"win.delete::{ex.id}")
@@ -239,6 +241,10 @@ class Window(Adw.ApplicationWindow):
     def _act_edit(self, _action, param) -> None:
         if ex := self._exit(param.get_string()):
             ExitEditor(ex, self._after_edit).present(self)
+
+    def _act_duplicate(self, _action, param) -> None:
+        if ex := self._exit(param.get_string()):
+            ExitEditor(None, self._after_create, template=ex).present(self)
 
     def _after_edit(self, ex) -> None:
         self.refresh()

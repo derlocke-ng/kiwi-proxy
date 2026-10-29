@@ -91,7 +91,9 @@ def _dns_from_args(a: argparse.Namespace, base: DnsConfig | None = None) -> DnsC
         if a.upstream not in dns.UPSTREAMS:
             raise ValueError(f"unknown upstream {a.upstream!r}; one of {', '.join(dns.UPSTREAMS)}")
         cfg.upstream = a.upstream
-    if getattr(a, "blocklist", None):
+    if getattr(a, "no_blocklist", False):
+        cfg.blocklists = []
+    elif getattr(a, "blocklist", None):
         unknown = [b for b in a.blocklist if b not in dns.BLOCKLISTS]
         if unknown:
             raise ValueError(f"unknown blocklist {unknown}; one of {', '.join(dns.BLOCKLISTS)}")
@@ -164,7 +166,10 @@ def cmd_show(a: argparse.Namespace) -> int:
         _p(
             f"  socks     {ex.socks_auth} (clients' own SOCKS auth goes upstream behind the exit token)"
         )
-    _p(f"  dns       {ex.dns.mode} via {ex.dns.upstream} · {', '.join(ex.dns.blocklists)}")
+    adblock = (
+        ", ".join(ex.dns.blocklists) if ex.dns.mode == "resolver" and ex.dns.blocklists else "off"
+    )
+    _p(f"  dns       {ex.dns.mode} via {ex.dns.upstream} · ad-blocking {adblock}")
     if ex.expose:
         auth = f"user {ex.expose.username}" if ex.expose.username else "no password"
         _p(f"  host      socks5://{ex.expose.address} ({auth})")
@@ -327,14 +332,25 @@ def cmd_dns(a: argparse.Namespace) -> int:
         found = dns.sync_stamps()
         _p(f"{len(found)} resolver stamps cached")
         return 0
-    names = a.names or ["oisd-big"]
-    for name in names:
-        path = dns.fetch_blocklist(name)
+    # Every list an exit uses, not only the default: the daily timer runs this
+    # with no arguments and must keep each exit's own lists fresh.
+    sets = {tuple(sorted(dns.DEFAULT_BLOCKLISTS))}
+    sets |= {tuple(sorted(ex.dns.blocklists)) for ex in exits.list_exits()}
+    if a.names:
+        sets.add(tuple(sorted(a.names)))
+    failed = 0
+    for name in a.names or sorted({n for s in sets for n in s}):
+        try:
+            path = dns.fetch_blocklist(name)
+        except Exception as exc:  # noqa: BLE001 - one list down must not stop the others
+            print(f"kiwi-proxy: {name}: {exc}", file=sys.stderr)
+            failed += 1
+            continue
         _p(f"{name}: {sum(1 for _ in path.open())} entries")
-    used = sorted({b for ex in exits.list_exits() for b in ex.dns.blocklists} | set(names))
-    merged = dns.merged_blocklist(used)
-    _p(f"merged {', '.join(used)} -> {merged}")
-    return 0
+    for names in sorted(sets):
+        merged = dns.merged_blocklist(list(names))
+        _p(f"merged {', '.join(names) or '(none)'} -> {merged.name}")
+    return 1 if failed else 0
 
 
 def _module_status_line(name: str) -> tuple[str, bool]:
@@ -501,7 +517,12 @@ def _dns_args(p: argparse.ArgumentParser) -> None:
         "--dns", choices=("resolver", "remote"), help="resolver in the gateway, or at the proxy"
     )
     p.add_argument("--upstream", help=f"DoH upstream: {', '.join(dns.UPSTREAMS)}")
-    p.add_argument("--blocklist", action="append", help=f"one of {', '.join(dns.BLOCKLISTS)}")
+    p.add_argument(
+        "--blocklist",
+        action="append",
+        help=f"ad-blocking list, repeatable: {', '.join(dns.BLOCKLISTS)} (default oisd-big)",
+    )
+    p.add_argument("--no-blocklist", action="store_true", help="no ad-blocking for this exit")
     p.add_argument(
         "--socks-auth",
         choices=("inject", "passthrough"),
@@ -588,7 +609,11 @@ def build_parser() -> argparse.ArgumentParser:
     dsub = dn_.add_subparsers(dest="dns_cmd", required=True)
     dsub.add_parser("sync", help="cache DoH resolver stamps")
     du = dsub.add_parser("update", help="download blocklists")
-    du.add_argument("names", nargs="*")
+    du.add_argument(
+        "names",
+        nargs="*",
+        help=f"default: every list an exit uses; one of {', '.join(dns.BLOCKLISTS)}",
+    )
     dn_.set_defaults(func=cmd_dns)
 
     sub.add_parser(

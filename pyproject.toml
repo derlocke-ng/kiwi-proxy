@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kiwi-proxy"
-version = "0.1.0"
+version = "0.2.0"
 description = "Sealed SOCKS5/VPN exits in rootless Podman — for browsers, pentest tools, host apps and kiwi-server machines"
 requires-python = ">=3.12"
 license = { text = "GPL-3.0-or-later" }
