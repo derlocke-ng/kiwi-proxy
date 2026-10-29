@@ -12,8 +12,7 @@ TAGS=proxy socks5 vpn tor mysterium 9proxy gateway killswitch podman kiwi-fox ki
 
 SCOPES=user
 
-# Placeholder until kiwi-icons has its own kiwi-proxy icon: kiwi-network's
-# (svg/classic/kiwi-network.svg).
+# the app's own icon, from kiwi-icons (svg/classic/kiwi-proxy.svg at c4a6a92)
 ICON=data/kiwi-proxy.svg
 ABOUT=README.md
 
