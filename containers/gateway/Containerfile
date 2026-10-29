@@ -1,0 +1,20 @@
+# kiwi-proxy gateway: owns the network namespace, holds the only route out.
+FROM registry.fedoraproject.org/fedora:43
+
+LABEL org.opencontainers.image.source="https://github.com/derlocke-ng/kiwi-proxy" \
+      org.opencontainers.image.description="kiwi-proxy gateway: a network namespace whose only route is one SOCKS5 upstream" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later"
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+      nftables dnscrypt-proxy python3 iproute bind-utils procps-ng \
+ && dnf clean all && rm -rf /var/cache/dnf
+
+COPY forwarder.py /usr/local/bin/kf-forwarder
+COPY exitinfo.py /usr/local/bin/kf-exitinfo
+COPY entrypoint.sh /usr/local/bin/kf-gateway
+RUN chmod +x /usr/local/bin/kf-forwarder /usr/local/bin/kf-exitinfo /usr/local/bin/kf-gateway
+
+# dnscrypt-proxy writes nothing we keep; the config arrives read-only at runtime.
+RUN mkdir -p /run/kf /blocklist
+
+ENTRYPOINT ["/usr/local/bin/kf-gateway"]

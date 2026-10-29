@@ -1,0 +1,43 @@
+# kiwi-proxy — one sealed gateway per exit: nftables inside lets out only the
+# exit's upstream, and its SOCKS5 is published on the host
+services:
+{% for name, e in exits.items() %}
+{% if e.via %}
+{% set via_mode = (module_config.get(e.via) or {}).get('network_mode') %}
+{% set target = container_ips.get(via_mode or e.via, '') %}
+{% endif %}
+  {{ container_prefix }}-proxy-{{ name }}:
+    image: {{ image }}
+    container_name: {{ container_prefix }}-proxy-{{ name }}
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges
+    environment:
+      - KF_EXIT_NAME={{ name }}
+{% if e.via %}
+      - KF_ENDPOINT_IP={{ target }}
+{% else %}
+      - KF_ENDPOINT_HOST={{ e.host }}
+{% endif %}
+      - KF_ENDPOINT_PORT={{ e.port }}
+      - KF_FORWARDER_PORT=1080
+      - KF_EXPOSE_PORT=1081
+      - KF_DNS_MODE=remote
+      - KF_CREDS_TABLE=/run/kf/credentials
+    volumes:
+      - {{ docker_dir }}/{{ container_prefix }}-proxy/credentials:/run/kf/credentials:ro,z
+    networks:
+      {{ network_name }}:
+        ipv4_address: {{ e.ip or (docker_subnet_base ~ '.' ~ (ip_offset | int + loop.index0)) }}
+    ports:
+      - "{{ exit_bind }}:{{ e.expose }}:1081/tcp"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+{% endfor %}

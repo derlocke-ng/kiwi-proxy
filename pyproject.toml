@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kiwi-proxy"
+version = "0.1.0"
+description = "Sealed SOCKS5/VPN exits in rootless Podman — for browsers, pentest tools, host apps and kiwi-server machines"
+requires-python = ">=3.12"
+license = { text = "GPL-3.0-or-later" }
+dependencies = ["pydantic>=2.6"]
+
+[project.scripts]
+kiwi-proxy = "kiwi_proxy.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["src", "."]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"

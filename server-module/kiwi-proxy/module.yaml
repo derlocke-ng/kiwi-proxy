@@ -1,0 +1,87 @@
+schema_version: "1.0"
+
+# kiwi-proxy as a kiwi-server module: a node or the master hosts sealed SOCKS5
+# exits for the mesh. Copy this directory into kiwi-server's modules/ (or
+# kiwi-modules'); see docs/kiwi-server.md in kiwi-proxy.
+module:
+  name: kiwi-proxy
+  title: kiwi-proxy exits
+  version: 0.1.0
+  description: "Sealed SOCKS5 exits for mesh clients — each one a kiwi-proxy gateway whose only route is one upstream (a VPN provider's SOCKS5, a residential proxy, this stack's Tor), published on the host's mesh address"
+  category: network
+  node_types: [master, node]
+
+dependencies:
+  required: []
+  optional: [tor, vpn-client, vpn-server]
+
+derived:
+  exit_bind: "{{ bind or vpn_ip or '127.0.0.1' }}"
+  exit_port_range: "{% if exits %}{% set ps = exits.values() | map(attribute='expose') | map('int') | list %}{{ ps | min }}{% if ps | min != ps | max %}-{{ ps | max }}{% endif %}/tcp{% endif %}"
+
+network:
+  needs_vpn_dnat: false
+  # what mesh clients connect to; the listeners bind only exit_bind
+  open_ports: ["{{ exit_port_range if open_firewall else '' }}"]
+
+firewall:
+  # each gateway seals its own namespace (nftables inside the container)
+  scope: self
+  rules: []
+
+validate:
+  - when: "not exits"
+    error: "kiwi-proxy needs at least one exit under exits:"
+  - when: "exits and (exits.values() | rejectattr('expose') | list)"
+    error: "every kiwi-proxy exit needs expose: (the host port its SOCKS5 is published on)"
+  - when: "exits and (exits.values() | rejectattr('port') | list)"
+    error: "every kiwi-proxy exit needs port: (the upstream's SOCKS5 port)"
+  - when: "exits and (exits.values() | selectattr('host', 'undefined') | selectattr('via', 'undefined') | list)"
+    error: "every kiwi-proxy exit needs host: (the upstream) or via: (a module of this stack)"
+  - when: "exits and (exits.values() | selectattr('via', 'defined') | rejectattr('via', 'in', modules) | list)"
+    error: "a kiwi-proxy exit's via: names a module that is not on this host"
+  - when: "exits and ip_offset | int + exits | length > 249"
+    error: "kiwi-proxy: ip_offset leaves no room for every exit below .250"
+
+templates:
+  compose: docker-compose.yml.j2
+  credentials: credentials.j2
+
+outputs:
+  credentials: { path: "{{ container_prefix }}-proxy/credentials", mode: 0600 }
+
+storage:
+  bind_mounts:
+    - { host: "${DOCKERDIR}/{{ container_prefix }}-proxy", type: dir, required: true }
+
+urls:
+  - "kiwi-proxy SOCKS5 exits: {% for n, e in exits.items() %}{{ n }} socks5h://{{ exit_bind }}:{{ e.expose }}{% if not loop.last %}, {% endif %}{% endfor %}"
+
+settings:
+  - key: exits
+    type: object
+    label: Exits
+    help: >-
+      One gateway per entry, by name: host + port (the upstream SOCKS5; a name is
+      resolved once in the container before it seals), or via + port (another module
+      of this stack, e.g. tor), and expose (the host port). Optional: username /
+      password for the upstream, expose_user / expose_password for the host port,
+      ip (the gateway's own address on the stack network).
+    required: true
+  - key: bind
+    label: Host address the exits are published on
+    help: "Empty: the host's mesh address (vpn_ip). 127.0.0.1 keeps them on the host."
+    default: ""
+  - key: open_firewall
+    type: bool
+    label: Open the exit ports in the host firewall
+    default: true
+  - key: ip_offset
+    type: int
+    group: Advanced
+    label: First host offset on the stack network
+    help: "Exits take consecutive addresses from here (.200, .201 …) unless one sets ip."
+    default: 200
+  - key: image
+    group: Advanced
+    default: ghcr.io/derlocke-ng/kiwi-proxy/gateway:latest

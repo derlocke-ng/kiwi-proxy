@@ -1,0 +1,23 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: derlocke-ng/kiwi-server
+          path: kiwi-server
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pydantic pytest ruff jinja2 pyyaml
+      - run: ruff check src tests containers && ruff format --check src tests containers
+      - run: python -m pytest tests/unit -q
+        env:
+          KIWI_SERVER_SRC: ${{ github.workspace }}/kiwi-server
+          PYTHONPATH: src:.

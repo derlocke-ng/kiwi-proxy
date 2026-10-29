@@ -1,0 +1,39 @@
+name: images
+
+# Build and publish the gateway image, for kiwi-server machines: their renderer
+# pulls fully qualified images (ghcr.io/derlocke-ng/kiwi-proxy/gateway) instead of
+# building them. A desktop builds its own with `kiwi-proxy setup`; nothing here is
+# needed for that.
+#
+# release.yml pushes the v<VERSION> tag with GITHUB_TOKEN, which does not trigger
+# tag workflows, so after a release run this by hand ("Run workflow").
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          REF="ghcr.io/derlocke-ng/kiwi-proxy/gateway"
+          VERSION="$(sed -n 's/^VERSION=//p' kiwi.manifest | head -1)"
+          podman build -t "$REF:$VERSION" -t "$REF:latest" containers/gateway
+          podman push "$REF:$VERSION"
+          podman push "$REF:latest"
+          DIGEST=$(podman inspect --format '{{ index .RepoDigests 0 }}' "$REF:$VERSION" || true)
+          echo "### gateway: \`$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
