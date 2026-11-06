@@ -419,6 +419,57 @@ def test_main_serves_the_member_and_the_host_listener(tmp_path):
     assert host_reply == bytes([5, 0xFF])
 
 
+def test_main_without_a_host_listener_comes_up(tmp_path):
+    """Every kiwi-fox gateway: no KF_EXPOSE_PORT, no KF_EXPOSE_CREDS_FILE. The
+    forwarder read the empty credentials path as the current directory and died
+    before listening, which took the gateway — and every browser — down at start."""
+    import os
+    import subprocess
+    import sys
+    import time
+
+    async def scenario() -> tuple[bool, bytes, bytes]:
+        upstream = AuthUpstream()
+        up_port = await upstream.start()
+        member = _free_port()
+        (tmp_path / "up").write_text("kf-tok\nexitpw\n")
+        env = {
+            **os.environ,
+            "KF_ENDPOINT_IP": "127.0.0.1",
+            "KF_ENDPOINT_PORT": str(up_port),
+            "KF_FORWARDER_PORT": str(member),
+            "KF_CREDS_FILE": str(tmp_path / "up"),
+        }
+        env.pop("KF_EXPOSE_PORT", None)
+        env.pop("KF_EXPOSE_CREDS_FILE", None)
+        proc = subprocess.Popen([sys.executable, str(SRC)], env=env, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and proc.poll() is None:
+                try:
+                    socket.create_connection(("127.0.0.1", member), timeout=0.2).close()
+                    break
+                except OSError:
+                    await asyncio.sleep(0.05)
+            alive = proc.poll() is None
+            if not alive:
+                return False, b"", proc.stderr.read()  # type: ignore[union-attr]
+            r, w = await asyncio.open_connection("127.0.0.1", member)
+            w.write(bytes([5, 1, 0]))
+            await w.drain()
+            got = await r.readexactly(2)
+            w.close()
+            return True, got, b""
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+            upstream.server.close()  # type: ignore[union-attr]
+
+    alive, reply, stderr = asyncio.run(scenario())
+    assert alive, stderr.decode(errors="replace")
+    assert reply == bytes([5, 0])
+
+
 # ------------------------------------------------------------------ blocklist
 def _blocklist(tmp_path, text="# oisd\nads.example\n*.tracker.example\n\n"):
     path = tmp_path / "blocked-names.txt"
@@ -487,3 +538,11 @@ def test_a_blocked_name_is_refused_before_anything_leaves(tmp_path):
     assert blocked == fwd.REP_NOT_ALLOWED
     assert allowed == 0 and by_ip == 0
     assert [r[1] for r in requests] == [b"wikipedia.org", socket.inet_aton("93.184.216.34")]
+
+
+def test_read_credentials_with_no_path_means_no_credentials(tmp_path):
+    # A gateway without a host listener runs with KF_EXPOSE_CREDS_FILE unset. The
+    # empty path is the current directory; reading it raised IsADirectoryError and
+    # took every gateway down at start.
+    assert fwd.read_credentials("") == (None, None)
+    assert fwd.read_credentials(str(tmp_path)) == (None, None)

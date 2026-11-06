@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+No gateway could start. Fixed.
+
+- **The forwarder crashed at start in every gateway without a host listener**,
+  which is every kiwi-fox profile and every plain `kiwi-proxy up`. With
+  `KF_EXPOSE_CREDS_FILE` unset it read the empty path as the current directory
+  and died with `IsADirectoryError` before listening; the gateway then exited
+  and every bring-up failed with "gateway exited during start". An empty path
+  now means no credentials. Two tests start the forwarder exactly as a gateway
+  does, with and without the host listener; the one test of its entry point had
+  only ever set the listener up.
+
 ## 0.2.0
 
 - **Ad-blocking everywhere a name is seen**: the forwarder refuses blocked names

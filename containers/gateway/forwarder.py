@@ -398,9 +398,15 @@ async def deny(writer: asyncio.StreamWriter, code: int) -> None:
 
 
 def read_credentials(path: str) -> tuple[str | None, str | None]:
-    """0600 file, two lines. Never an env var: `podman inspect` shows env."""
+    """0600 file, two lines. Never an env var: `podman inspect` shows env.
+
+    No path, or no file there, means no credentials. The empty-path case is every
+    gateway without a host listener (KF_EXPOSE_CREDS_FILE unset): ``Path("")`` is
+    the current directory, which exists, and reading it crashed the forwarder."""
+    if not path:
+        return None, None
     p = Path(path)
-    if not p.exists():
+    if not p.is_file():
         return None, None
     lines = p.read_text().splitlines()
     user = lines[0].strip() if lines else ""
