@@ -50,13 +50,15 @@ cleanup() {
 trap cleanup EXIT
 
 # The container is running and reports ready, within 30 s. An exit before that is
-# the failure this exists to catch, so it is reported with the logs.
+# the failure this exists to catch, so it is reported with the logs. grep reads
+# the log to its end: a `grep -q` (or `head`) that exits early gives podman a
+# SIGPIPE, which pipefail reports as a failure.
 wait_ready() {
     local name=$1 i
     for i in $(seq 1 60); do
         [ "$(podman inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = true ] \
             || fail "$name exited during startup"
-        if podman logs "$name" 2>&1 | grep -qF 'the namespace is sealed'; then
+        if podman logs "$name" 2>&1 | grep -F 'the namespace is sealed' >/dev/null; then
             return 0
         fi
         sleep 0.5
@@ -123,7 +125,7 @@ gateway --env KF_EXPOSE_PORT="$EXPOSE_PORT" \
     --secret "$EXPOSE_CREDS,type=mount,target=/run/secrets/$EXPOSE_CREDS" \
     --publish "127.0.0.1::$EXPOSE_PORT/tcp"
 wait_ready "$GW"
-HOST_PORT="$(podman port "$GW" "$EXPOSE_PORT/tcp" | head -1 | sed 's/.*://')"
+HOST_PORT="$(podman port "$GW" "$EXPOSE_PORT/tcp" | sed -n '1s/.*://p')"
 [ -n "$HOST_PORT" ] || fail "no published port for $EXPOSE_PORT"
 echo "ready; published on 127.0.0.1:$HOST_PORT"
 python3 "$HERE/socks5_probe.py" relay 127.0.0.1 "$HOST_PORT" me hunter2 \
