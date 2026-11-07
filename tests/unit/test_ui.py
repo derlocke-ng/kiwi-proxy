@@ -169,8 +169,9 @@ def test_blocklists_are_chosen_per_exit():
     ed.list_rows["oisd-big"].set_active(False)
     ed.list_rows["oisd-nsfw"].set_active(True)
     assert ed.collect()["dns"].blocklists == ["oisd-nsfw"]
-    ed.dns_row.set_selected(1)  # remote: names go to the exit, nothing to filter here
-    assert not ed.list_rows["oisd-nsfw"].get_visible() and not ed.upstream_row.get_visible()
+    ed.dns_row.set_selected(1)  # remote: names go to the exit; the forwarder still filters
+    assert ed.list_rows["oisd-nsfw"].get_visible() and not ed.upstream_row.get_visible()
+    assert ed.collect()["dns"].blocklists == ["oisd-nsfw"]
 
 
 def test_editing_shows_the_exits_lists():

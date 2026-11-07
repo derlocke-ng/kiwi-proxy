@@ -166,9 +166,7 @@ def cmd_show(a: argparse.Namespace) -> int:
         _p(
             f"  socks     {ex.socks_auth} (clients' own SOCKS auth goes upstream behind the exit token)"
         )
-    adblock = (
-        ", ".join(ex.dns.blocklists) if ex.dns.mode == "resolver" and ex.dns.blocklists else "off"
-    )
+    adblock = ", ".join(ex.dns.blocklists) if ex.dns.blocklists else "off"
     _p(f"  dns       {ex.dns.mode} via {ex.dns.upstream} · ad-blocking {adblock}")
     if ex.expose:
         auth = f"user {ex.expose.username}" if ex.expose.username else "no password"

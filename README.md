@@ -43,7 +43,7 @@ kiwi-proxy setup             # gateway image, DNS data, provider module images
 
 ## The app
 
-`kiwi-proxy-gui` ("Kiwi-Proxy" in your app grid) does everything below without a
+`kiwi-proxy-gui` ("Kiwi Proxy" in your app grid) does everything below without a
 terminal: add and edit exits — a SOCKS5 you were given or a provider module — bring
 them up and down, offer one as a SOCKS5 port on this computer and copy its address,
 check what the world sees through it, see who joined a gateway, set up modules.

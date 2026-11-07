@@ -17,6 +17,7 @@ KIWI_SCOPE="${KIWI_SCOPE:-user}"
 KIWI_PREFIX="${KIWI_PREFIX:-$HOME/.local}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP=kiwi-proxy
+DESKTOP_ID=eu.kiwinetwork.KiwiProxy   # the GTK application id: entry and icon carry it
 LIBDIR="$KIWI_PREFIX/lib/$APP"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/$APP"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/$APP"
@@ -62,10 +63,16 @@ export PYTHONPATH="$LIBDIR\${PYTHONPATH:+:\$PYTHONPATH}"
 exec python3 -m kiwi_proxy.ui "\$@"
 EOW
         chmod +x "$KIWI_PREFIX/bin/$APP-gui"
-        install -Dm644 "$SRC/data/$APP.desktop" \
-            "$KIWI_PREFIX/share/applications/$APP.desktop" 2>/dev/null || true
-        install -Dm644 "$SRC/data/$APP.svg" \
-            "$KIWI_PREFIX/share/icons/hicolor/scalable/apps/$APP.svg" 2>/dev/null || true
+        # Entry and icon are named after the GTK application id, so GNOME links
+        # the window to them; Exec is the launcher's absolute path, as the app
+        # grid may not have ~/.local/bin on its PATH.
+        mkdir -p "$KIWI_PREFIX/share/applications"
+        sed "s|^Exec=.*|Exec=$KIWI_PREFIX/bin/$APP-gui|" "$SRC/data/$DESKTOP_ID.desktop" \
+            > "$KIWI_PREFIX/share/applications/$DESKTOP_ID.desktop"
+        install -Dm644 "$SRC/data/$DESKTOP_ID.svg" \
+            "$KIWI_PREFIX/share/icons/hicolor/scalable/apps/$DESKTOP_ID.svg" 2>/dev/null || true
+        rm -f "$KIWI_PREFIX/share/applications/$APP.desktop" \
+            "$KIWI_PREFIX/share/icons/hicolor/scalable/apps/$APP.svg"   # the names before 0.3.1
         refresh_desktop_caches
     fi
 
@@ -121,7 +128,7 @@ EOW
     echo "    $APP setup"
     echo
     echo "Then:  $APP add work socks5://host:port --expose 1081   &&   $APP up work"
-    echo "   or: $APP-gui   (\"Kiwi-Proxy\" in your app grid)"
+    echo "   or: $APP-gui   (\"Kiwi Proxy\" in your app grid)"
 }
 
 do_update() { do_install; }
@@ -131,8 +138,10 @@ do_uninstall() {
     rm -f "$UNITDIR/$APP-blocklists."{service,timer} "$UNITDIR/$APP@.service"
     systemctl --user daemon-reload 2>/dev/null || true
     rm -f "$KIWI_PREFIX/bin/$APP" "$KIWI_PREFIX/bin/$APP-gui"
-    rm -f "$KIWI_PREFIX/share/applications/$APP.desktop"
-    rm -f "$KIWI_PREFIX/share/icons/hicolor/scalable/apps/$APP.svg"
+    rm -f "$KIWI_PREFIX/share/applications/$DESKTOP_ID.desktop" \
+        "$KIWI_PREFIX/share/applications/$APP.desktop"
+    rm -f "$KIWI_PREFIX/share/icons/hicolor/scalable/apps/$DESKTOP_ID.svg" \
+        "$KIWI_PREFIX/share/icons/hicolor/scalable/apps/$APP.svg"
     refresh_desktop_caches
     rm -rf "$LIBDIR"
 

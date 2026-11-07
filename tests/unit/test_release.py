@@ -50,7 +50,23 @@ def test_manifest_follows_the_kiwi_convention():
         assert (ROOT / shot).is_file(), f"screenshot {shot} does not exist"
     assert (ROOT / "LICENSE").is_file()
     assert "gui" in m["COMPONENTS"].split()
-    assert (ROOT / "data" / "kiwi-proxy.desktop").is_file()
+
+
+def test_the_desktop_entry_and_icon_carry_the_application_id():
+    # GNOME on Wayland finds a window's entry by its app-id: the entry and the icon
+    # are named after it, Icon= and StartupWMClass= say it, and the name shown has
+    # no dash (the command has one, the app does not).
+    from kiwi_proxy import APP_ID
+
+    entry = ROOT / "data" / f"{APP_ID}.desktop"
+    assert entry.is_file()
+    fields = dict(line.split("=", 1) for line in entry.read_text().splitlines() if "=" in line)
+    assert fields["Icon"] == APP_ID
+    assert fields["StartupWMClass"] == APP_ID
+    assert fields["Name"] == "Kiwi Proxy"
+    assert "-" not in fields["Name"]
+    assert manifest()["ICON"] == f"data/{APP_ID}.svg"
+    assert (ROOT / "data" / f"{APP_ID}.svg").is_file()
 
 
 def test_the_server_module_carries_the_same_version():

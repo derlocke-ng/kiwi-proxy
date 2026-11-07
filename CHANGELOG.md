@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1
+
+The app has its icon back, and is called Kiwi Proxy.
+
+- **GNOME could not match the window to its entry.** The window's app-id was
+  `dev.kiwinetwork.KiwiProxy` while the desktop entry was `kiwi-proxy.desktop`
+  with `StartupWMClass=kiwi-proxy`, so the shell showed a blank icon and no name.
+  The id is `eu.kiwinetwork.KiwiProxy` now, like the other kiwi apps, and the
+  entry and the icon are named after it; the install writes the launcher's
+  absolute path into `Exec`, and removes the old file names.
+- The app is **Kiwi Proxy** in the grid, the window title and About — the command
+  keeps its dash, the app does not.
+- `show`, the app's details and the editor no longer say ad-blocking is off in
+  remote DNS mode: since 0.3.0 the lists apply in both modes, and the editor
+  offers them in both; only the resolver's upstream is resolver-only.
+
 ## 0.3.0
 
 Exits are the proxies other apps share.

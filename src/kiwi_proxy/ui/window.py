@@ -18,7 +18,7 @@ REFRESH_SECONDS = 4
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, **kwargs) -> None:
-        super().__init__(default_width=760, default_height=620, title="Kiwi-Proxy", **kwargs)
+        super().__init__(default_width=760, default_height=620, title="Kiwi Proxy", **kwargs)
         self._rows: dict[str, Adw.ActionRow] = {}
         self._busy: set[str] = set()
         self._up: dict[str, dict] = {}  # exit id -> gateway row from gateway.running()
@@ -37,7 +37,7 @@ class Window(Adw.ApplicationWindow):
         menu.append("Check environment", "win.doctor")
         menu.append("Tidy up unused gateways", "win.reap")
         menu.append("Take down the exits made here", "win.down-all")
-        menu.append("About Kiwi-Proxy", "app.about")
+        menu.append("About Kiwi Proxy", "app.about")
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
         header.pack_end(menu_button)
 

@@ -174,7 +174,7 @@ class ExitEditor(Adw.Dialog):
         self.dns_row = _combo(
             "Names",
             [label for _k, label in DNS_MODES],
-            subtitle="by the exit: no ad-blocking, as Tor Browser needs",
+            subtitle="by the exit, as Tor needs (.onion resolves only there); listed names are still refused",
         )
         self.dns_row.connect("notify::selected", self._refresh)
         dns_group.add(self.dns_row)
@@ -293,10 +293,10 @@ class ExitEditor(Adw.Dialog):
         bind = self.bind_row.get_text().strip() or "127.0.0.1"
         loopback = bind in ("127.0.0.1", "::1", "localhost") or bind.startswith("127.")
         self.open_row.set_visible(exposed and not authed and not loopback)
+        # Only the resolver has an upstream; the lists apply in both modes (the
+        # forwarder refuses listed names a remote-DNS client hands it).
         resolver = DNS_MODES[self.dns_row.get_selected()][0] == "resolver"
         self.upstream_row.set_visible(resolver)
-        for row in self.list_rows.values():
-            row.set_visible(resolver)
         self.test_row.set_visible(self.module is None)
 
     def _say(self, text: str, *, error: bool = True) -> None:
@@ -492,7 +492,7 @@ class ExitDetails(Adw.Dialog):
             )
         )
         lists = ", ".join(BLOCKLIST_LABELS.get(n, (n,))[0].lower() for n in ex.dns.blocklists)
-        up.add(_row("Ad-blocking", lists if lists and ex.dns.mode == "resolver" else "off"))
+        up.add(_row("Ad-blocking", lists or "off"))
         up.add(_row("Client credentials", dict(SOCKS_AUTH)[ex.socks_auth]))
         page.add(up)
 
