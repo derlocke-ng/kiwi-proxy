@@ -11,8 +11,8 @@ import subprocess
 import pytest
 from test_providers import install_module
 
-from kiwi_proxy import dns, gateway, paths, podman, providers
-from kiwi_proxy.models import DnsConfig, Expose
+from kiwi_proxy import dns, exits, gateway, paths, podman, providers
+from kiwi_proxy.models import DnsConfig, Endpoint, Expose
 
 
 class FakePodman:
@@ -188,6 +188,18 @@ def test_resolver_mode_mounts_its_config(new_exit, monkeypatch):
 
 
 # --------------------------------------------------------------- credentials
+def test_an_exit_on_an_isolation_provider_is_passthrough_by_default():
+    install_module()  # faketor: auth="isolation"
+    tor = exits.create("anon", Endpoint(host="10.89.231.5", port=9050, module="faketor"))
+    assert tor.socks_auth == "passthrough"
+    plain = exits.create("work", Endpoint(host="10.64.0.1", port=1080))
+    assert plain.socks_auth == "inject"
+    forced = exits.create(
+        "tb", Endpoint(host="10.64.0.1", port=1080, username="u"), socks_auth="passthrough"
+    )
+    assert forced.socks_auth == "passthrough"
+
+
 def test_isolation_provider_gets_a_stable_per_exit_token(new_exit):
     install_module()  # faketor: auth="isolation"
     ex = new_exit(module="faketor", lease="de", port=9050)
@@ -455,16 +467,21 @@ def test_the_forwarder_blocks_too_in_resolver_mode(new_exit):
     assert spec.env["KF_BLOCKLIST"] == "/blocklist/blocked-names.txt"
 
 
-def test_no_name_filtering_without_lists_or_in_remote_mode(new_exit):
-    # remote means the names go to the exit untouched — Tor Browser's exits are remote
-    assert (
-        "KF_BLOCKLIST"
-        not in gateway.gateway_spec(new_exit(dns=DnsConfig(blocklists=[])), "1.2.3.4").env
-    )
-    assert (
-        "KF_BLOCKLIST"
-        not in gateway.gateway_spec(new_exit(dns=DnsConfig(mode="remote")), "1.2.3.4").env
-    )
+def test_the_forwarder_blocks_in_remote_mode_too(new_exit):
+    # A remote-DNS client (every browser in remote mode, Tor Browser included) hands
+    # the forwarder every name, so the list applies there whatever the DNS mode; only
+    # the resolver and its config are absent.
+    spec = gateway.gateway_spec(new_exit(dns=DnsConfig(mode="remote")), "1.2.3.4")
+    assert spec.env["KF_BLOCKLIST"] == "/blocklist/blocked-names.txt"
+    assert spec.env["KF_DNS_MODE"] == "remote"
+    assert any(dst == "/blocklist" for _src, dst, _opt in spec.volumes)
+    assert not any(dst == "/run/kf/dnscrypt-proxy.toml" for _src, dst, _opt in spec.volumes)
+
+
+def test_no_name_filtering_without_lists(new_exit):
+    spec = gateway.gateway_spec(new_exit(dns=DnsConfig(blocklists=[])), "1.2.3.4")
+    assert "KF_BLOCKLIST" not in spec.env
+    assert not any(dst == "/blocklist" for _src, dst, _opt in spec.volumes)
 
 
 def test_dns_update_refreshes_every_exits_lists(monkeypatch, capsys):

@@ -50,8 +50,11 @@ class ExitInfo(Strict):
 
 
 class DnsConfig(Strict):
-    # "resolver": dnscrypt-proxy in the gateway, upstream through the SOCKS5 exit.
-    # "remote":   hand the hostname to the proxy (most native, no DNS adblock).
+    # "resolver": dnscrypt-proxy in the gateway, upstream through the SOCKS5 exit;
+    #             it refuses the blocklists' names.
+    # "remote":   hand every name to the proxy (what Tor needs: .onion resolves only
+    #             there). The forwarder still refuses the blocklists' names, since a
+    #             remote-DNS client hands it every name.
     mode: Literal["resolver", "remote"] = "resolver"
     upstream: str = "google"  # key into dns.UPSTREAMS
     blocklists: list[str] = Field(default_factory=lambda: ["oisd-big"])

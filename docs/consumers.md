@@ -31,16 +31,15 @@ checkout, a sibling `../kiwi-proxy/src` does the same for tests.
 from kiwi_proxy import exits, gateway
 from kiwi_proxy.models import DnsConfig, Endpoint
 
-# Register an exit under your own id, so you find it again without a lookup table
-# and the gateway keeps a name others already know.
-ex = exits.create(
-    "work", Endpoint(host="10.64.0.1", port=1080), exit_id=profile.id, owner="kiwi-fox"
-)
+# An exit is a proxy the user defined (kiwi-proxy add, or the app). Keep its id;
+# a consumer may create one too (`owner` says who), and `exit_id=` lets it pick the
+# id when a gateway name others already know must survive.
+ex = exits.resolve_ref("kiwi-master-tor")   # by name or id prefix; exits.load(id)
 
 gw = gateway.up(
     ex,
-    password=my_keyring_lookup(),           # or None: kiwi-proxy's own secret store
-    labels={"app": "kiwi-fox", "kiwi-fox.profile": profile.id, "kiwi-fox.role": "gateway"},
+    password=None,                          # kiwi-proxy's own secret store holds it
+    labels={"app": "kiwi-fox", "kiwi-fox.role": "gateway"},
 )
 gw.name          # "kf-gw-…": --network container:<this>
 gw.resolv_conf   # mount at /etc/resolv.conf, or None in remote DNS mode
@@ -89,14 +88,26 @@ kiwi-proxy down NAME
 consumer wants: kiwi-pentesting brings an identity's exit up without a browser,
 runs its tools in it, and downs it.
 
+## Sharing an exit
+
+One exit, one gateway, any number of members: two browser profiles on the same
+exit, a pentest tool beside them, a `kiwi-proxy up` for the host port — all in the
+same namespace, behind the same token and the same DNS. `up()` hands the running
+gateway back (`reused=True`); each member calls `release(ex.id, ignore=(me,))` when
+it is done, and the gateway goes with the last one unless held. Members that want
+apart identities use apart exits.
+
 ## kiwi-fox
 
-kiwi-fox registers one exit per profile (`exit_id=profile.id`, `owner="kiwi-fox"`),
-so its gateways keep the names and isolation tokens they always had. It brings the
-exit up at launch, joins the browser, and calls `release(profile.id,
-ignore=(browser,))` when the window closes — a pentest tool on the same identity, or
-a `kiwi-proxy up` of it, keeps the exit alive. Its launch-time pre-flight
-(`gateway.plan`) still decides the fingerprint's region before the window opens.
+Since kiwi-fox 0.4 a profile references an exit by id (`profile.exit`), or none at
+all (the browser on the host's own connection). `kiwi-fox new NAME ENDPOINT` and
+`new NAME --module tor` create the exit as a shortcut, named after the profile and
+with `owner="kiwi-fox"`; `new NAME --exit EXIT` uses one that exists. Profiles from
+before 0.4 keep the exit that was registered under their own id, so their gateway
+names and Tor tokens do not change. kiwi-fox brings the exit up at launch, joins
+the browser, and calls `release(exit_id, ignore=(browser,))` when the window
+closes. Its launch-time pre-flight (`gateway.plan`) still decides a Camoufox
+profile's region before the window opens.
 
 ## kiwi-pentesting
 
@@ -104,8 +115,7 @@ It drives the CLI (`core/proxyclient.py`, `docs/kiwi-proxy-integration.md` there
 
 - `kiwi-proxy list --json` for every exit, including ones with no browser, and
   `kiwi-proxy ps --json` / the `kiwi-proxy.role=gateway` label for running gateways
-  from any app; kiwi-fox's own labels (`kiwi-fox.role=gateway`, `kiwi-fox.profile`)
-  are its fallback;
+  from any app; kiwi-fox's own label (`kiwi-fox.role=gateway`) is its fallback;
 - `kiwi-proxy up <name> --json` to bring an identity up headless, then `name` to
   join; `kiwi-proxy down <name>` when done;
 - `kiwi-proxy check <name> --json` to measure the exit without a probe container

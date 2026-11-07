@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0
+
+Exits are the proxies other apps share.
+
+- **Ad-blocking in remote DNS mode too.** The forwarder gets the exit's blocklist
+  whatever the DNS mode, so a browser in remote mode — Tor Browser, anything
+  that hands the proxy its names — has listed names refused as well. Only the
+  resolver and its config stay out of a remote exit; `--no-blocklist` still
+  turns filtering off. A running remote exit picks this up when it is next
+  brought up.
+- **Tor exits are passthrough by default.** An exit on an isolation provider
+  (the tor module) is created with `socks_auth=passthrough`: a member without
+  SOCKS credentials still gets the exit's token, Tor Browser keeps a circuit
+  per site, so one exit serves every kind of member and nothing has to be
+  switched later. `--socks-auth inject` keeps the old behaviour; existing
+  exits are left as they are.
+- Docs: a consumer — kiwi-fox 0.4, kiwi-pentesting, kiwi-custodia — references
+  an exit the user defined; several profiles or tools share the exit's one
+  gateway and each lets go with `release(ignore=…)`. `docs/consumers.md` says
+  how, and no longer tells a consumer to register an exit per profile.
+
 ## 0.2.1
 
 No gateway could start. Fixed.

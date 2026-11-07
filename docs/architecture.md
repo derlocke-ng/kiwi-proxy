@@ -53,8 +53,10 @@ An exit's `dns.mode` is `resolver` (the default) or `remote`.
   same list is handed to the forwarder (`KF_BLOCKLIST`), which refuses a CONNECT by
   name to a listed domain or a name under it (`REP_NOT_ALLOWED`) — that covers
   clients that never ask the resolver: `socks5h` on the host port.
-- **remote** — no resolver, no list: every name goes to the exit as is. Tor
-  Browser's exits are remote.
+- **remote** — no resolver: every name goes to the exit as is (what Tor needs).
+  The forwarder still gets the list, because a remote-DNS client — every browser
+  in this mode, Tor Browser included — hands it every name; so blocking holds in
+  both modes, and only an exit without lists filters nothing.
 
 Each set of lists has its own merged file in `blocklists/` (`blocked-names.txt` for
 the default oisd big, `blocked-names-<lists>.txt` otherwise), replaced atomically
@@ -81,8 +83,9 @@ Every container kiwi-proxy starts carries `kiwi-proxy.role`
 (`gateway|provider|tunnel|adapter`); that is the one filter. Gateways also carry
 `kiwi-proxy.exit`, `kiwi-proxy.module`/`kiwi-proxy.lease` (provider exits),
 `kiwi-proxy.expose` and `kiwi-proxy.config`. `app` is the consumer's: kiwi-fox sets
-`app=kiwi-fox` plus its own `kiwi-fox.role=gateway` and `kiwi-fox.profile=<id>`, so
-tools that discover kiwi-fox gateways by label keep finding them.
+`app=kiwi-fox` and `kiwi-fox.role=gateway` on a gateway it brings up, so tools that
+discover kiwi-fox gateways by label keep finding them. Labels say who asked first;
+a gateway is shared by every member that joins it afterwards.
 
 ## Names
 

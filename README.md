@@ -22,7 +22,8 @@ gateway dies, everything using it loses connectivity.
 This is the proxy engine [kiwi-fox](https://github.com/derlocke-ng/kiwi-fox) used to
 carry, split out so it serves more than one browser:
 
-- **kiwi-fox** joins each browser identity to its exit's gateway.
+- **kiwi-fox** gives each browser profile an exit; several profiles may share one,
+  and they share its gateway.
 - **[kiwi-pentesting](https://github.com/derlocke-ng/kiwi-pentesting)** joins its tool
   containers to the same gateway — browsing and testing share one IP.
 - **Anything on the host** — a browser, `curl`, a mail client — uses the exit's
@@ -111,9 +112,11 @@ switches in the app). The block applies wherever a name shows up:
 | an app on the host port with `socks5h://` | the forwarder refuses the CONNECT for that name |
 | a kiwi-server exit | the gateway fetches its lists through its own exit, daily, and the forwarder refuses |
 
-`--dns remote` hands every name to the exit untouched — no resolver, no
-ad-blocking. That is what Tor Browser needs, and what kiwi-fox sets for it. An app
-using plain `socks5://` (no `h`) resolves names itself, outside the exit: use
+`--dns remote` hands every name to the exit untouched — no resolver in the
+gateway, which is what Tor needs (`.onion` resolves only there). The forwarder
+still refuses listed names, since a remote-DNS client hands it every one; so
+ad-blocking holds in both modes, and `--no-blocklist` turns it off. An app using
+plain `socks5://` (no `h`) resolves names itself, outside the exit: use
 `socks5h`. The lists refresh daily (`kiwi-proxy-blocklists.timer`, or
 `kiwi-proxy dns update`); running gateways pick the new list up by themselves.
 
@@ -122,7 +125,9 @@ using plain `socks5://` (no `h`) resolves names itself, outside the exit: use
 Tor Browser puts a SOCKS username and password on every request to get a circuit
 per site. `--socks-auth passthrough` carries them through, behind the exit's own
 token, so Tor's `IsolateSOCKSAuth` keeps per-site circuits while exits stay apart.
-kiwi-fox sets it for its Tor Browser profiles.
+An exit on the tor module is passthrough by default: a member without SOCKS
+credentials still gets the exit's token, so the same exit serves Tor Browser, a
+Camoufox profile and a tool alike.
 
 ## Provider modules
 

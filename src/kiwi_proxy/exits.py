@@ -52,6 +52,22 @@ def module_endpoint(module: str, *, lease: str | None, country: str | None) -> E
     )
 
 
+def default_socks_auth(endpoint: Endpoint) -> str:
+    """Passthrough on an isolation provider (tor), inject everywhere else. On tor
+    the exit has a token to put in front, a no-auth client in the namespace still
+    gets that token, and a client that brings its own SOCKS credentials — Tor
+    Browser — keeps a circuit per site. So one exit serves every kind of member,
+    and nothing has to be flipped for Tor Browser later."""
+    try:
+        if providers.manages(endpoint.module) and providers.manifest_of(endpoint.module).auth == (
+            "isolation"
+        ):
+            return "passthrough"
+    except providers.ProviderError:
+        pass
+    return "inject"
+
+
 def make_expose(
     bind: str, port: int, *, username: str | None, password: str | None, allow_open: bool
 ) -> Expose:
@@ -83,6 +99,7 @@ def create(
     expose_password: str | None = None,
     owner: str | None = None,
     exit_id: str | None = None,
+    socks_auth: str | None = None,
     notes: str = "",
 ) -> Exit:
     if not valid_name(name):
@@ -98,6 +115,7 @@ def create(
         endpoint=endpoint,
         dns=dns or DnsConfig(),
         expose=expose,
+        socks_auth=socks_auth or default_socks_auth(endpoint),  # type: ignore[arg-type]
         owner=owner,
         notes=notes,
     )
