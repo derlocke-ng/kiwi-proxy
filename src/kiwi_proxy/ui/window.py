@@ -16,6 +16,16 @@ from .dialogs import ExitDetails, ExitEditor, ModulesDialog, proxy_url  # noqa: 
 REFRESH_SECONDS = 4
 
 
+def _members_of(ex) -> list[str]:
+    """Who is inside the exit's gateway, each marked when kiwi-proxy keeps it as an
+    image before removing it (a Kiwi Custodia box)."""
+    lines = []
+    for member in podman.dependents(paths.gateway_name(ex.id)):
+        image = gateway.kept_as(member)
+        lines.append(f"{member} — kept as an image first" if image else member)
+    return lines
+
+
 class Window(Adw.ApplicationWindow):
     def __init__(self, **kwargs) -> None:
         super().__init__(default_width=760, default_height=620, title="Kiwi Proxy", **kwargs)
@@ -370,25 +380,31 @@ class Window(Adw.ApplicationWindow):
 
     def _confirm_down(self, ex) -> None:
         def work():
-            return podman.dependents(paths.gateway_name(ex.id))
+            return _members_of(ex)
 
         def ask(members) -> None:
             if not members:
                 self._down(ex)
                 return
-            dialog = Adw.AlertDialog(
-                heading=f"Take {ex.name} down?",
-                body="These are inside it and lose their connection with it:\n\n"
-                + "\n".join(members),
-            )
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("down", "Take down")
-            dialog.set_response_appearance("down", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response("cancel")
-            dialog.connect("response", lambda _d, r: r == "down" and self._down(ex))
-            dialog.present(self)
+            self._ask_down(f"Take {ex.name} down?", members, lambda: self._down(ex))
 
-        worker.run(work, ask, lambda _exc: self._down(ex))
+        # Not knowing who is inside is no reason to go ahead.
+        worker.run(
+            work, ask, lambda exc: self._alert(f"Could not see who uses {ex.name}", str(exc))
+        )
+
+    def _ask_down(self, heading: str, members: list[str], go) -> None:
+        dialog = Adw.AlertDialog(
+            heading=heading,
+            body="These are inside; they lose their connection and are removed with it:\n\n"
+            + "\n".join(members),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("down", "Take down")
+        dialog.set_response_appearance("down", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.connect("response", lambda _d, r: r == "down" and go())
+        dialog.present(self)
 
     def _down(self, ex) -> None:
         self._busy.add(ex.id)
@@ -408,12 +424,28 @@ class Window(Adw.ApplicationWindow):
         worker.run(lambda: gateway.down(ex.id), done, failed)
 
     def _down_all(self) -> None:
-        def work():
-            for ex in exits.list_exits():
-                if gateway.is_up(ex.id) and not ex.owner:
-                    gateway.down(ex.id)
+        def mine():
+            return [ex for ex in exits.list_exits() if gateway.is_up(ex.id) and not ex.owner]
 
-        worker.run(work, lambda _r: (self.refresh(), self._toast("The exits made here are down")))
+        def who():
+            return [m for ex in mine() for m in _members_of(ex)]
+
+        def work():
+            for ex in mine():
+                gateway.down(ex.id)
+
+        def go() -> None:
+            worker.run(
+                work, lambda _r: (self.refresh(), self._toast("The exits made here are down"))
+            )
+
+        def ask(members) -> None:
+            if members:
+                self._ask_down("Take every exit made here down?", members, go)
+            else:
+                go()
+
+        worker.run(who, ask, lambda exc: self._alert("Could not see who uses the exits", str(exc)))
 
     def _reap(self) -> None:
         def work():

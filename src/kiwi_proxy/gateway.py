@@ -370,6 +370,28 @@ def _running_dependents(name: str, ignore: tuple[str, ...] = ()) -> list[str]:
     return [d for d in podman.dependents(name) if d not in ignore and podman.is_running(d)]
 
 
+def kept_as(member: str) -> str | None:
+    """The image a member asked to be committed to before it is removed, or None."""
+    return podman.labels(member).get(paths.SNAPSHOT_LABEL) or None
+
+
+def _remove_member(name: str) -> None:
+    """Remove a container that joined a gateway. One that asked to be kept
+    (`kiwi-proxy.snapshot=<image>` — a Kiwi Custodia box) is committed to that
+    image first and stays put when that fails: a lost route is recoverable, what
+    someone installed in it is not."""
+    image = kept_as(name)
+    if image:
+        try:
+            podman.commit(name, image)
+        except podman.PodmanError as exc:
+            raise GatewayError(
+                f"{name} asked to be kept as {image} before it is removed, and that "
+                f"failed ({exc}); it was left in place"
+            ) from exc
+    podman.rm(name)
+
+
 def up(
     ex: Exit,
     *,
@@ -442,7 +464,7 @@ def up(
     # podman refuses to replace it while they exist ("has dependent containers
     # which must be removed before it"). They have no route without it anyway.
     for dep in podman.dependents(spec.name):
-        podman.rm(dep)
+        _remove_member(dep)
     podman.start(spec)
     if not podman.is_running(spec.name):
         raise GatewayError(f"gateway failed to start:\n{podman.logs(spec.name)}")
@@ -493,7 +515,7 @@ def down(exit_id: str) -> None:
     name = paths.gateway_name(exit_id)
     lab = podman.labels(name)
     for dep in podman.dependents(name):
-        podman.rm(dep)
+        _remove_member(dep)
     podman.rm(name)
     podman.secret_rm(paths.creds_secret_name(exit_id))
     podman.secret_rm(paths.expose_secret_name(exit_id))

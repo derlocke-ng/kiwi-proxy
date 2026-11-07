@@ -38,7 +38,8 @@ plaintext DNS.
    back as is. That is how a browser and a pentest tool share one identity.
 3. **replace** — running with other settings: replaced only when nobody uses it or
    the caller says `replace=True`; whoever joined is removed first, because podman
-   cannot swap a namespace out from under its members.
+   cannot swap a namespace out from under its members (a member labelled
+   `kiwi-proxy.snapshot=<image>` is committed to that image before it goes).
 4. **start** — credentials as podman secrets, the container, then wait for
    `ready — the namespace is sealed`.
 5. **measure** — a provider exit the host cannot reach is measured from inside,

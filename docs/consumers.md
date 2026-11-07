@@ -17,6 +17,11 @@ same gateways.
   `socks5h` so names go to the exit.
 - **Fail closed.** If the gateway dies, members lose connectivity. "Not running" is
   a hard stop for a consumer, never a reason to fall back to a direct connection.
+- **Members go with the gateway.** `down`, a replace and `reap` remove whoever
+  joined, because podman cannot move a container to another namespace. A member
+  whose contents matter labels itself `kiwi-proxy.snapshot=<image>`: kiwi-proxy
+  commits it to that image before removing it, and leaves it in place when the
+  commit fails (`GatewayError`). The consumer starts the next one from that image.
 - Credentials are podman secrets; a consumer never reads or needs them.
 - Every gateway carries `kiwi-proxy.role=gateway` and `kiwi-proxy.exit=<exit id>`;
   `app` and any further labels are the consumer's own.

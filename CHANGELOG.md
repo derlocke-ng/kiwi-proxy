@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1
+
+- **A member that must keep its contents is kept.** Taking an exit down — the
+  stop button in Kiwi Proxy, `kiwi-proxy down`, a replace, `reap` — removes every
+  container joined to its gateway, and a Kiwi Custodia box is one: whatever was
+  installed in it went with the exit. A member now labels itself
+  `kiwi-proxy.snapshot=<image>` and kiwi-proxy commits it to that image before
+  removing it; when the commit fails the member is left in place. `kiwi-proxy
+  down` and the confirmation in Kiwi Proxy say which members are kept.
+- **A failed `podman ps` is not "nobody is inside".** `reap` and `release` tear a
+  gateway down when no running member is left, and a listing that failed (podman
+  under load times out) looked like that. It is an error now — in the window too,
+  which used to take the exit down unasked when it could not list the members.
+
 ## 0.7.0
 
 - **An exit is IPv4 to the world.** A CONNECT by name used to be handed to the

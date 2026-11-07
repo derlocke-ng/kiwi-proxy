@@ -21,6 +21,8 @@ class FakePodman:
         self.secrets: dict[str, str] = {}
         self.started: list[str] = []
         self.removed: list[str] = []
+        self.committed: list[tuple[str, str]] = []
+        self.fail_commit = False
         self.provider_ip = "10.89.231.7"
         m = monkeypatch
         m.setattr(podman, "available", lambda: True)
@@ -29,6 +31,7 @@ class FakePodman:
         m.setattr(podman, "labels", lambda n: dict(self.containers.get(n, {}).get("labels", {})))
         m.setattr(podman, "dependents", self.dependents)
         m.setattr(podman, "rm", self.rm)
+        m.setattr(podman, "commit", self.commit)
         m.setattr(podman, "start", self.start)
         m.setattr(podman, "logs", lambda n, tail=50: gateway.READY_MARK)
         m.setattr(podman, "secret_set", lambda n, v: self.secrets.__setitem__(n, v))
@@ -67,13 +70,18 @@ class FakePodman:
             self.removed.append(name)
             del self.containers[name]
 
+    def commit(self, name, image):
+        if self.fail_commit:
+            raise podman.PodmanError("podman commit failed: no space left on device")
+        self.committed.append((name, image))
+
     def dependents(self, name):
         return [n for n, c in self.containers.items() if c["network"] == f"container:{name}"]
 
-    def join(self, name, gw, *, running=True):
+    def join(self, name, gw, *, running=True, labels=None):
         self.containers[name] = {
             "running": running,
-            "labels": {},
+            "labels": dict(labels or {}),
             "env": {},
             "network": f"container:{gw}",
         }
@@ -419,6 +427,57 @@ def test_down_removes_members_first(new_exit, fake):
     fake.join("kf-br-x", paths.gateway_name(ex.id))
     gateway.down(ex.id)
     assert fake.removed[0] == "kf-br-x"
+    assert fake.committed == []  # a browser asked for nothing
+
+
+def test_down_keeps_a_member_that_asked_for_it(new_exit, fake):
+    ex = remote(new_exit)
+    gateway.up(ex)
+    gw = paths.gateway_name(ex.id)
+    fake.join("kc-box-1", gw, labels={paths.SNAPSHOT_LABEL: "localhost/kc/box-1:latest"})
+    fake.join("kf-br-x", gw)
+    gateway.down(ex.id)
+    assert fake.committed == [("kc-box-1", "localhost/kc/box-1:latest")]
+    assert {"kc-box-1", "kf-br-x", gw} <= set(fake.removed)
+
+
+def test_a_member_whose_snapshot_failed_is_left_in_place(new_exit, fake):
+    ex = remote(new_exit)
+    gateway.up(ex)
+    gw = paths.gateway_name(ex.id)
+    fake.join("kc-box-1", gw, labels={paths.SNAPSHOT_LABEL: "localhost/kc/box-1:latest"})
+    fake.fail_commit = True
+    with pytest.raises(gateway.GatewayError, match="kept as .* left in place"):
+        gateway.down(ex.id)
+    assert "kc-box-1" in fake.containers
+    assert gw in fake.containers  # podman could not remove it with a member inside anyway
+
+
+def test_replacing_a_gateway_keeps_such_a_member_too(new_exit, fake):
+    ex = remote(new_exit)
+    gateway.up(ex)
+    fake.join(
+        "kc-box-1", paths.gateway_name(ex.id), labels={paths.SNAPSHOT_LABEL: "localhost/kc/b:1"}
+    )
+    ex.endpoint.port = 2080  # other settings: the gateway is replaced
+    gateway.up(ex, replace=True)
+    assert fake.committed == [("kc-box-1", "localhost/kc/b:1")]
+    assert "kc-box-1" not in fake.containers
+
+
+def test_reap_does_not_take_a_failed_listing_for_an_empty_gateway(new_exit, fake, monkeypatch):
+    ex = remote(new_exit)
+    gateway.up(ex)
+    fake.join("kc-box-1", paths.gateway_name(ex.id))
+
+    def broken(name):
+        raise podman.PodmanError("podman ps --all --quiet --no-trunc failed: timed out")
+
+    monkeypatch.setattr(podman, "dependents", broken)
+    with pytest.raises(podman.PodmanError):
+        gateway.reap()
+    assert paths.gateway_name(ex.id) in fake.containers
+    assert "kc-box-1" in fake.containers
 
 
 # ------------------------------------------------------------------ providers

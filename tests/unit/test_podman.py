@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import subprocess
+
+import pytest
+
+from kiwi_proxy import podman
+
 
 def test_logs_merge_stderr_and_drop_colours(monkeypatch):
     """A daemon logs to stderr, in colour; an error quoting its last lines wants
     both streams in order and plain text — and nothing for a container that is gone."""
-    import subprocess
 
     from kiwi_proxy import podman
 
@@ -59,3 +64,38 @@ def test_a_tun_device_runs_the_container_unlabelled():
         )
     )
     assert "label=disable" not in own and "label=type:spc_t" in own
+
+
+def test_dependents_refuses_a_failed_listing(monkeypatch):
+    def run(args, *, check=True, timeout=120):
+        if args[0] == "ps":
+            if check:
+                raise podman.PodmanError("podman ps failed: timed out")
+            return subprocess.CompletedProcess(args, 125, stdout="", stderr="timed out")
+        return subprocess.CompletedProcess(args, 0, stdout="abc\n", stderr="")
+
+    monkeypatch.setattr(podman, "exists", lambda n: True)
+    monkeypatch.setattr(podman, "_run", run)
+    with pytest.raises(podman.PodmanError):
+        podman.dependents("gw")
+
+
+def test_commit_does_not_pause_and_checks_the_image_is_there(monkeypatch):
+    calls = []
+
+    def run(args, *, check=True, timeout=120):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(podman, "_run", run)
+    podman.commit("kc-box-1", "localhost/kc/box-1:latest")
+    assert calls[0] == ["commit", "-q", "--pause=false", "kc-box-1", "localhost/kc/box-1:latest"]
+    assert calls[1] == ["image", "exists", "localhost/kc/box-1:latest"]
+
+    def gone(args, *, check=True, timeout=120):
+        rc = 1 if args[:2] == ["image", "exists"] else 0
+        return subprocess.CompletedProcess(args, rc, stdout="", stderr="")
+
+    monkeypatch.setattr(podman, "_run", gone)
+    with pytest.raises(podman.PodmanError, match="not there"):
+        podman.commit("kc-box-1", "localhost/kc/box-1:latest")

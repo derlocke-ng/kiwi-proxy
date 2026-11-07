@@ -213,11 +213,16 @@ def dependents(name: str) -> list[str]:
     if not exists(name):
         return []
     ident = _run(["inspect", name, "--format", "{{.Id}}"], check=False).stdout.strip()
-    ids = _run(["ps", "--all", "--quiet", "--no-trunc"], check=False).stdout.split()
+    # A listing that failed must not read as "nobody is inside": reap and release
+    # tear the gateway down on that answer. (podman under load does time out.)
+    ids = _run(["ps", "--all", "--quiet", "--no-trunc"]).stdout.split()
     if not ids:
         return []
     fmt = "{{.Name}}\t{{.HostConfig.NetworkMode}}"
-    out = _run(["inspect", "--format", fmt, *ids], check=False).stdout
+    proc = _run(["inspect", "--format", fmt, *ids], check=False)
+    if proc.returncode != 0 and not proc.stdout.strip():
+        raise PodmanError(f"podman inspect failed: {proc.stderr.strip()}")
+    out = proc.stdout  # partial output is fine: a container may have gone meanwhile
     wanted = {f"container:{name}", f"container:{ident}"} if ident else {f"container:{name}"}
     found = []
     for line in out.splitlines():
@@ -289,6 +294,15 @@ def container_env(name: str, key: str) -> str | None:
 
 def image_exists(image: str) -> bool:
     return _run(["image", "exists", image], check=False).returncode == 0
+
+
+def commit(name: str, image: str) -> None:
+    """Keep a container's filesystem as `image` — a member that must not lose its
+    contents when its gateway goes. Without pausing it: someone may be working in
+    it, and a frozen container hangs them for the whole commit."""
+    _run(["commit", "-q", "--pause=false", name, image], timeout=900)
+    if not image_exists(image):
+        raise PodmanError(f"podman commit returned but {image} is not there")
 
 
 def pull(image: str) -> None:

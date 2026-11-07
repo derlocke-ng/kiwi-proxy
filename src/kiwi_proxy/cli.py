@@ -277,9 +277,10 @@ def cmd_up(a: argparse.Namespace) -> int:
 def cmd_down(a: argparse.Namespace) -> int:
     ex = exits.resolve_ref(a.ref)
     members = podman.dependents(paths.gateway_name(ex.id))
+    kept = {m: gateway.kept_as(m) for m in members}
     gateway.down(ex.id)
-    gone = f" (and {', '.join(members)})" if members else ""
-    _p(f"{ex.name} down{gone}")
+    gone = ", ".join(f"{m} (kept as {kept[m]})" if kept[m] else m for m in members)
+    _p(f"{ex.name} down" + (f" (and {gone})" if gone else ""))
     return 0
 
 
