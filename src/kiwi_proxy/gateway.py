@@ -518,6 +518,33 @@ def release(exit_id: str, *, ignore: tuple[str, ...] = ()) -> bool:
 
 
 # ------------------------------------------------------------------- measuring
+def exit_logs(ex, lines: int = 200) -> list[tuple[str, str]]:
+    """(container, recent log) for the containers behind an exit, so someone can
+    see whether the provider connected and what any error is: the module's own
+    container (Mysterium/VPN node, the tor/9proxy provider), its tunnel adapter
+    where there is one, and the gateway — whichever exist right now."""
+    out: list[tuple[str, str]] = []
+    if not podman.available():
+        return out
+    module = ex.endpoint.module
+    if providers.manages(module):
+        try:
+            prov, manifest = providers.load(module)
+            ctx = providers.context_for(module, manifest)
+            for name in (
+                ctx.container_name(ex.endpoint.lease),
+                ctx.adapter_name(ex.endpoint.lease),
+            ):
+                if podman.exists(name):
+                    out.append((name, podman.logs(name, tail=lines)))
+        except providers.ProviderError:
+            pass
+    gw = paths.gateway_name(ex.id)
+    if podman.exists(gw):
+        out.append((gw, podman.logs(gw, tail=lines)))
+    return out
+
+
 def measure_exit(gateway: str, url: str | None = None) -> ExitInfo:
     """What the world sees, asked from inside the namespace through the forwarder —
     so it works for every exit, including provider exits the host cannot reach.

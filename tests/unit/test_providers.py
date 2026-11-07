@@ -488,3 +488,22 @@ def test_container_env_parses_one_var(monkeypatch):
     )
     assert podman.container_env("c", "KF_ENDPOINT_IP") == "10.89.231.9"
     assert podman.container_env("c", "MISSING") is None
+
+
+def test_a_modules_own_lines_are_quoted_not_the_daemons_noise(fake_module, monkeypatch):
+    _stub_podman(monkeypatch, running=True, ip=None)
+    monkeypatch.setattr(podman, "rm", lambda name, **k: None)
+    noise = "\n".join(f"2026-11-07T05:13:25 DBG eventbus noise {i}" for i in range(30))
+    monkeypatch.setattr(
+        podman,
+        "logs",
+        lambda name, tail=50: "kf-x: starting\nkf-x: session established\n" + noise + "\n",
+    )
+    provider, manifest = providers.load("faketor")
+    provider.ready_timeout = 0.3
+    provider.log_marker = "kf-x:"
+    ctx = providers.context_for("faketor", manifest)
+    with pytest.raises(providers.ProviderError) as info:
+        provider.up(ctx, lease="de")
+    text = str(info.value)
+    assert "kf-x: session established" in text and "noise 29" not in text

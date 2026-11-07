@@ -291,8 +291,8 @@ class ContainerProvider:
         while time.monotonic() < deadline:
             if not podman.is_running(container):
                 raise ProviderError(
-                    f"{self.name}: provider container exited during start:\n"
-                    + podman.logs(container)
+                    f"{self.name}: provider container exited during start:"
+                    + _log_tail(container, 20, getattr(self, "log_marker", None))
                 )
             ip = podman.container_ip(container, ctx.network)
             if ip and self.ready(ctx, container):
@@ -302,7 +302,7 @@ class ContainerProvider:
         raise ProviderError(
             f"{self.name}: provider did not become ready within {self.ready_timeout:.0f}s"
             + (f" (address {last})" if last else "")
-            + _log_tail(container)
+            + _log_tail(container, marker=getattr(self, "log_marker", None))
         )
 
     def ready(self, ctx: ProviderContext, container: str) -> bool:  # noqa: ARG002
@@ -427,7 +427,8 @@ class TunnelProvider(ContainerProvider):
         while time.monotonic() < deadline:
             if not podman.is_running(container):
                 raise ProviderError(
-                    f"{self.name}: tunnel container exited during start:\n" + podman.logs(container)
+                    f"{self.name}: tunnel container exited during start:"
+                    + _log_tail(container, 20, getattr(self, "log_marker", None))
                 )
             ip = podman.container_ip(container, ctx.network)
             if ip and self.tunnel_ready(ctx, container):
@@ -437,7 +438,7 @@ class TunnelProvider(ContainerProvider):
         raise ProviderError(
             f"{self.name}: tunnel did not come up within {self.ready_timeout:.0f}s"
             + (f" (address {last})" if last else "")
-            + _log_tail(container)
+            + _log_tail(container, marker=getattr(self, "log_marker", None))
         )
 
     def down(self, ctx: ProviderContext, *, lease: str | None = None) -> None:
@@ -467,14 +468,21 @@ class TunnelProvider(ContainerProvider):
         return status
 
 
-def _log_tail(container: str, lines: int = 8) -> str:
+def _log_tail(container: str, lines: int = 8, marker: str | None = None) -> str:
     """The last lines a container logged, for an error about it; nothing when it
-    logged nothing (or is already gone)."""
+    logged nothing (or is already gone). With a module's `log_marker` (the prefix
+    its own entrypoint logs with, "kf-myst:"), those lines are quoted instead of
+    whatever a chatty daemon printed last — the ones that say what it was doing."""
     try:
-        tail = [ln for ln in podman.logs(container, tail=lines).splitlines() if ln.strip()]
+        text = podman.logs(container, tail=400 if marker else lines)
     except Exception:  # noqa: BLE001 - the error being built matters more
         return ""
-    return ("\n  its log ends:\n  " + "\n  ".join(tail[-lines:])) if tail else ""
+    found = [ln for ln in text.splitlines() if ln.strip()]
+    if marker:
+        own = [ln for ln in found if marker in ln]
+        found = own or found
+    tail = found[-lines:]
+    return ("\n  its log ends:\n  " + "\n  ".join(tail)) if tail else ""
 
 
 def _label(spec: ContainerSpec, module: str, lease: str | None, *, role: str) -> None:

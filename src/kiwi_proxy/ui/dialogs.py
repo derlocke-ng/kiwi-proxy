@@ -13,10 +13,6 @@ from .. import dns, endpoint, exits, gateway, paths, podman, providers, secrets 
 from ..models import DnsConfig, Lease  # noqa: E402
 from . import worker  # noqa: E402
 
-DNS_MODES = (
-    ("resolver", "Resolved in the gateway"),
-    ("remote", "Resolved by the exit"),
-)
 SOCKS_AUTH = (
     ("inject", "Add the exit's credentials (default)"),
     ("passthrough", "Pass a client's own through (Tor Browser)"),
@@ -27,6 +23,34 @@ BLOCKLIST_LABELS = {
     "oisd-nsfw": ("Adult content", "oisd nsfw"),
 }
 SOCKS5 = "SOCKS5 endpoint"
+_UPSTREAM_LABELS = {
+    "quad9": "Quad9 · blocks malware",
+    "cloudflare": "Cloudflare",
+    "mullvad": "Mullvad",
+    "google": "Google",
+}
+
+
+def _resolve_choices() -> list[tuple[str, str | None, str]]:
+    """The one 'resolve through' choice behind DnsConfig's mode + upstream: the
+    exit itself (remote — .onion and the exit's own resolver), or a DoH resolver
+    run in the gateway. Ad-blocking is independent of it and applies either way."""
+    order = ["quad9", "cloudflare", "mullvad", "google"]
+    names = [u for u in order if u in dns.UPSTREAMS] + [
+        u for u in sorted(dns.UPSTREAMS) if u not in order
+    ]
+    return [("remote", None, "The exit itself")] + [
+        ("resolver", u, _UPSTREAM_LABELS.get(u, u.title())) for u in names
+    ]
+
+
+def _resolve_label(mode: str, upstream: str | None) -> str:
+    for m, u, label in _resolve_choices():
+        if m == mode and (m == "remote" or u == upstream):
+            return label
+    return "The exit itself" if mode == "remote" else (upstream or "a resolver")
+
+
 ANY_COUNTRY = "Any country"
 ANY_LEASE = "(the provider's choice)"
 FIRST_HOST_PORT = 1081
@@ -136,6 +160,9 @@ class ExitEditor(Adw.Dialog):
         self.country_row = Adw.ComboRow(title="Country", subtitle="any", enable_search=True)
         self._countries: list[str | None] = [None]
         self.country_row.set_model(Gtk.StringList.new([ANY_COUNTRY]))
+        self.country_row.set_expression(  # so typing filters the list
+            Gtk.PropertyExpression.new(Gtk.StringObject, None, "string")
+        )
         self.country_row.connect("notify::selected", self._on_country)
         upstream.add(self.country_row)
         self.test_row = Adw.ActionRow(
@@ -181,22 +208,18 @@ class ExitEditor(Adw.Dialog):
         # ----------------------------------------------------------------- dns
         dns_group = Adw.PreferencesGroup(
             title="DNS and ad-blocking",
-            description="The resolver asks its upstream through the exit too. Names on "
-            "the lists are refused — for containers that join the exit and for "
-            "socks5h on the SOCKS5 port alike.",
+            description="Where names are resolved. Ad-blocking lists are refused either "
+            "way — for containers that join the exit and for socks5h on the SOCKS5 port "
+            "alike.",
         )
-        self.dns_row = _combo(
-            "Names",
-            [label for _k, label in DNS_MODES],
-            subtitle="by the exit, as Tor needs (.onion resolves only there); listed names are still refused",
+        self._resolve = _resolve_choices()
+        self.resolve_row = _combo(
+            "Resolve names through",
+            [label for _m, _u, label in self._resolve],
+            self._resolve_index("resolver", DnsConfig().upstream),
+            subtitle="the exit itself (.onion, its own DNS), or a resolver run in the gateway",
         )
-        self.dns_row.connect("notify::selected", self._refresh)
-        dns_group.add(self.dns_row)
-        self._upstreams = sorted(dns.UPSTREAMS)
-        self.upstream_row = _combo(
-            "Resolver upstream", self._upstreams, self._upstreams.index(DnsConfig().upstream)
-        )
-        dns_group.add(self.upstream_row)
+        dns_group.add(self.resolve_row)
         self.list_rows: dict[str, Adw.SwitchRow] = {}
         for name in dns.BLOCKLISTS:
             title, subtitle = BLOCKLIST_LABELS.get(name, (name, ""))
@@ -267,11 +290,9 @@ class ExitEditor(Adw.Dialog):
                 self.password_row.set_title("Password (empty: keep the stored one)")
             elif not ex.expose.loopback:
                 self.open_row.set_active(True)
-        self.dns_row.set_selected([k for k, _l in DNS_MODES].index(ex.dns.mode))
+        self.resolve_row.set_selected(self._resolve_index(ex.dns.mode, ex.dns.upstream))
         for name, row in self.list_rows.items():
             row.set_active(name in ex.dns.blocklists)
-        if ex.dns.upstream in self._upstreams:
-            self.upstream_row.set_selected(self._upstreams.index(ex.dns.upstream))
         self.socks_row.set_selected([k for k, _l in SOCKS_AUTH].index(ex.socks_auth))
 
     def _on_source(self, *_args) -> None:
@@ -332,10 +353,20 @@ class ExitEditor(Adw.Dialog):
     def _on_country(self, *_args) -> None:
         pass  # the picker asks the module for the country chosen when it opens
 
+    def _resolve_index(self, mode: str, upstream: str | None) -> int:
+        for i, (m, u, _label) in enumerate(self._resolve):
+            if m == mode and (m == "remote" or u == upstream):
+                return i
+        return next(
+            (i for i, (m, u, _l) in enumerate(self._resolve) if m == "resolver" and u == "google"),
+            0,
+        )
+
     def _set_lease(self, lease_id: str | None, lease: Lease | None = None) -> None:
         """What the picker chose (or the edited exit has): the id kept for the
         endpoint, and the row says which it is."""
         self._lease = lease_id or None
+        self.lease_row.set_tooltip_text(lease_id or "")
         if not lease_id:
             self.lease_row.set_subtitle(ANY_LEASE)
         elif lease is None:
@@ -345,7 +376,9 @@ class ExitEditor(Adw.Dialog):
 
     def _on_choose_lease(self, *_args) -> None:
         if self.module:
-            LeasePicker(self.module, self.country, self._lease, self._set_lease).present(self)
+            tell = lambda m: self._say(m, error=False)  # noqa: E731 - the picker's copy confirm
+            picker = LeasePicker(self.module, self.country, self._lease, self._set_lease, tell)
+            picker.present(self)
 
     def _refresh(self, *_args) -> None:
         exposed = self.expose_row.get_active()
@@ -357,10 +390,6 @@ class ExitEditor(Adw.Dialog):
         bind = self.bind_row.get_text().strip() or "127.0.0.1"
         loopback = bind in ("127.0.0.1", "::1", "localhost") or bind.startswith("127.")
         self.open_row.set_visible(exposed and not authed and not loopback)
-        # Only the resolver has an upstream; the lists apply in both modes (the
-        # forwarder refuses listed names a remote-DNS client hands it).
-        resolver = DNS_MODES[self.dns_row.get_selected()][0] == "resolver"
-        self.upstream_row.set_visible(resolver)
         self.test_row.set_visible(self.module is None)
 
     def _say(self, text: str, *, error: bool = True) -> None:
@@ -416,9 +445,10 @@ class ExitEditor(Adw.Dialog):
                     and (not self.ex or other.id != self.ex.id)
                 ):
                     raise ValueError(f"port {expose.port} is already {other.name}'s")
+        mode, upstream, _label = self._resolve[self.resolve_row.get_selected()]
         dns_cfg = DnsConfig(
-            mode=DNS_MODES[self.dns_row.get_selected()][0],
-            upstream=self._upstreams[self.upstream_row.get_selected()],
+            mode=mode,
+            upstream=upstream or DnsConfig().upstream,
             blocklists=[n for n, row in self.list_rows.items() if row.get_active()],
         )
         return {
@@ -522,6 +552,16 @@ class ExitDetails(Adw.Dialog):
         )
         self.members_row = _row("Members", "—")
         state.add(self.members_row)
+        logs_row = Adw.ActionRow(
+            title="Container logs",
+            subtitle="whether the provider connected, and any error — the provider and the gateway",
+            use_markup=False,
+        )
+        logs_row.set_subtitle_lines(0)
+        show = Gtk.Button(label="View logs", valign=Gtk.Align.CENTER)
+        show.connect("clicked", lambda *_: LogsDialog(self.ex, self._toast).present(self))
+        logs_row.add_suffix(show)
+        state.add(logs_row)
         page.add(state)
 
         up = Adw.PreferencesGroup(title="Upstream")
@@ -547,13 +587,7 @@ class ExitDetails(Adw.Dialog):
                     f"{e.ip} · {e.country or '?'} {e.city or ''} · {e.seen:%Y-%m-%d %H:%M}",
                 )
             )
-        up.add(
-            _row(
-                "DNS",
-                dict(DNS_MODES)[ex.dns.mode]
-                + (f" · {ex.dns.upstream}" if ex.dns.mode == "resolver" else ""),
-            )
-        )
+        up.add(_row("Resolve through", _resolve_label(ex.dns.mode, ex.dns.upstream)))
         lists = ", ".join(BLOCKLIST_LABELS.get(n, (n,))[0].lower() for n in ex.dns.blocklists)
         up.add(_row("Ad-blocking", lists or "off"))
         up.add(_row("Client credentials", dict(SOCKS_AUTH)[ex.socks_auth]))
@@ -621,9 +655,12 @@ class LeasePicker(Adw.Dialog):
     IP type, and a field to force an id the list does not show. `on_picked(id,
     lease)` gets the choice; None for the module's own."""
 
-    def __init__(self, module: str, country: str | None, current: str | None, on_picked) -> None:
+    def __init__(
+        self, module: str, country: str | None, current: str | None, on_picked, toast=None
+    ) -> None:
         self.module, self.country, self.current = module, country, current
         self._on_picked = on_picked
+        self._toast = toast
         self._leases: list[Lease] = []
         self._kind: str | None = None
         self.rows: list[Adw.ActionRow] = []
@@ -633,6 +670,14 @@ class LeasePicker(Adw.Dialog):
         )
         header, cancel, self.use_button = _dialog_header("Use", self._on_use)
         cancel.connect("clicked", lambda *_: self.close())
+        copy = Gtk.Button(
+            icon_name="edit-copy-symbolic",
+            valign=Gtk.Align.CENTER,
+            tooltip_text="Copy the selected id",
+        )
+        copy.add_css_class("flat")
+        copy.connect("clicked", self._copy_selected)
+        header.pack_start(copy)
 
         box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -755,11 +800,32 @@ class LeasePicker(Adw.Dialog):
         )
 
     # ---------------------------------------------------------------- choice
+    def _resolve_typed(self, text: str) -> str:
+        """A typed id — the full one, the short form (0xcbb6…eb78), a prefix, or any
+        unique piece — becomes the full id when exactly one loaded provider matches;
+        otherwise it is used as typed (an id the list does not carry)."""
+        text = text.strip()
+        if not text:
+            return text
+        for lease in self._leases:
+            if text in (lease.id, lease.short_id):
+                return lease.id
+        hits = [x for x in self._leases if text.lower() in x.id.lower()]
+        return hits[0].id if len(hits) == 1 else text
+
+    def _copy_selected(self, *_args) -> None:
+        row = self.listbox.get_selected_row()
+        text = (getattr(row, "lease_id", None) if row else None) or self.id_row.get_text().strip()
+        if text:
+            Gdk.Display.get_default().get_clipboard().set(text)
+            if self._toast:
+                self._toast(f"Copied {text}")
+
     def _on_use(self, *_args) -> None:
         forced = self.id_row.get_text().strip()
         row = self.listbox.get_selected_row()
         if forced and (row is None or row.lease_id is None):
-            self._pick(forced)
+            self._pick(self._resolve_typed(forced))
         elif row is not None:
             self._pick(row.lease_id)
 
@@ -883,6 +949,7 @@ class ModulesDialog(Adw.Dialog):
     def __init__(self, toast=None) -> None:
         super().__init__(title="Provider modules", content_width=560, content_height=520)
         self._toast = toast
+        self._setup_buttons: list[Gtk.Button] = []  # disabled together: one build at a time
         page = Adw.PreferencesPage()
         self.group = Adw.PreferencesGroup(
             description="Each module turns an upstream — Tor, a VPN, 9proxy, Mysterium — "
@@ -920,6 +987,7 @@ class ModulesDialog(Adw.Dialog):
         button = Gtk.Button(label="Set up", valign=Gtk.Align.CENTER)
         button.connect("clicked", self._on_setup, name, row)
         row.add_suffix(button)
+        self._setup_buttons.append(button)
         self._status(name, row)
         return row
 
@@ -946,20 +1014,105 @@ class ModulesDialog(Adw.Dialog):
 
         ModuleConfigDialog(name, done).present(self)
 
-    def _on_setup(self, button: Gtk.Button, name: str, row: Adw.ActionRow) -> None:
+    def _on_setup(self, _button: Gtk.Button, name: str, row: Adw.ActionRow) -> None:
         from .. import setup
 
-        button.set_sensitive(False)
+        # One at a time: two image builds at once make podman serialise and look
+        # hung, so every Set up is disabled until this one finishes.
+        for b in self._setup_buttons:
+            b.set_sensitive(False)
         row.set_subtitle("building or pulling its image…")
 
+        def reenable() -> None:
+            for b in self._setup_buttons:
+                b.set_sensitive(True)
+
         def done(_r) -> None:
-            button.set_sensitive(True)
+            reenable()
             self._status(name, row)
             if self._toast:
-                self._toast(f"{name}: image ready")
+                self._toast(self._setup_note(name))
 
         def failed(exc: Exception) -> None:
-            button.set_sensitive(True)
+            reenable()
             row.set_subtitle(f"{name} · setup failed: {exc}")
 
         worker.run(lambda: setup.setup_module(name), done, failed)
+
+    def _setup_note(self, name: str) -> str:
+        """After a build, say plainly when a module still needs configuring —
+        Mysterium's image is ready but it has no identity until you import one."""
+        try:
+            prov, manifest = providers.load(name)
+            ctx = providers.context_for(name, manifest)
+            if prov.settings(ctx) and not prov.configured(ctx):
+                return f"{name}: image ready — not configured yet; use Configure…"
+        except providers.ProviderError:
+            pass
+        return f"{name}: image ready"
+
+
+class LogsDialog(Adw.Dialog):
+    """The recent logs of an exit's containers — the provider (its connection
+    lines, any error) and the gateway — read-only, with Refresh. This is how you
+    tell a Mysterium/VPN node that connected from one still trying, or stuck."""
+
+    def __init__(self, ex, toast=None) -> None:
+        self.ex = ex
+        self._toast = toast
+        super().__init__(title=f"{ex.name} · logs", content_width=860, content_height=680)
+        header = Adw.HeaderBar()
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
+        refresh.connect("clicked", lambda *_: self._load())
+        header.pack_end(refresh)
+        copy = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy all")
+        copy.connect("clicked", self._copy)
+        header.pack_start(copy)
+        self.view = Gtk.TextView(
+            editable=False,
+            monospace=True,
+            cursor_visible=False,
+            left_margin=10,
+            right_margin=10,
+            top_margin=10,
+            bottom_margin=10,
+        )
+        self.view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.buffer = self.view.get_buffer()
+        self.buffer.set_text("reading…")
+        scroller = Gtk.ScrolledWindow(vexpand=True, child=self.view)
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(scroller)
+        self.set_child(toolbar)
+        self._load()
+
+    def _text(self) -> str:
+        start, end = self.buffer.get_bounds()
+        return self.buffer.get_text(start, end, False)
+
+    def _copy(self, *_args) -> None:
+        Gdk.Display.get_default().get_clipboard().set(self._text())
+        if self._toast:
+            self._toast("Logs copied")
+
+    def _load(self) -> None:
+        def done(entries) -> None:
+            if not entries:
+                self.buffer.set_text(
+                    f"{self.ex.name} has no running containers.\n"
+                    "Bring it up first, then reopen this to watch it connect."
+                )
+                return
+            self.buffer.set_text(
+                "\n\n".join(
+                    f"==> {name} <==\n{text.rstrip() or '(no output yet)'}"
+                    for name, text in entries
+                )
+            )
+
+        worker.run(
+            lambda: gateway.exit_logs(self.ex, lines=400),
+            done,
+            lambda exc: self.buffer.set_text(f"could not read the logs: {exc}"),
+        )

@@ -178,3 +178,34 @@ def test_a_module_endpoint_takes_a_country_code_only(fakemyst):
     assert exits.module_endpoint(fakemyst, lease=None, country="").country is None
     with pytest.raises(exits.ExitError, match="two-letter code.*module countries fakemyst"):
         exits.module_endpoint(fakemyst, lease=None, country="germany")
+
+
+def test_cli_module_logs(fakemyst, monkeypatch, capsys):
+    from kiwi_proxy import paths, podman
+
+    rows = [
+        {
+            "Names": ["kf-prov-fakemyst-0xde1"],
+            "Labels": {paths.MODULE_LABEL: "fakemyst", paths.ROLE_LABEL: "tunnel"},
+        },
+        {
+            "Names": ["kf-gw-abc"],  # a gateway is not a module container — excluded
+            "Labels": {paths.MODULE_LABEL: "fakemyst", paths.ROLE_LABEL: "gateway"},
+        },
+    ]
+    monkeypatch.setattr(podman, "available", lambda: True)
+    monkeypatch.setattr(
+        podman,
+        "ps",
+        lambda all_=True, *, labels=None: [
+            r for r in rows if not labels or all(r["Labels"].get(k) == v for k, v in labels.items())
+        ],
+    )
+    monkeypatch.setattr(podman, "logs", lambda n, tail=200: f"=log {n}")
+    assert cli.main(["module", "logs", "fakemyst"]) == 0
+    out = capsys.readouterr().out
+    assert "==> kf-prov-fakemyst-0xde1 <==" in out and "=log kf-prov-fakemyst-0xde1" in out
+    assert "kf-gw-abc" not in out
+    monkeypatch.setattr(podman, "ps", lambda all_=True, *, labels=None: [])
+    assert cli.main(["module", "logs", "fakemyst"]) == 0
+    assert "no fakemyst container is running" in capsys.readouterr().out

@@ -123,6 +123,15 @@ manifest). Override `ready()` when the upstream has a slow handshake — a VPN t
 or a Tor bootstrap — so kiwi-proxy waits for the SOCKS5 port, not just a running
 container.
 
+### Saying what went wrong
+
+Log from your entrypoint with a fixed prefix (`kf-myst: connecting to …`,
+`kf-myst: FATAL: …`) and declare it as `log_marker = "kf-myst:"` on the provider:
+when a start times out or the container exits, kiwi-proxy quotes those lines in
+its error instead of whatever the daemon printed last, and `kiwi-proxy logs NAME`
+/ the app's View logs show the whole container log. A `FATAL` line is how a
+tunnel module's `tunnel_ready` turns a dead end into an error with a reason.
+
 ### Settings
 
 A module that needs something from the user before it can run — Mysterium's

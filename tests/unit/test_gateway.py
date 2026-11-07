@@ -344,6 +344,22 @@ def test_a_held_exit_survives_release(new_exit, fake):
     assert paths.gateway_name(ex.id) not in fake.containers
 
 
+def test_exit_logs_cover_the_provider_and_the_gateway(new_exit, fake, monkeypatch):
+    install_module()
+    ex = remote(new_exit, module="faketor", lease="de", port=9050)
+    gateway.up(ex, measure=False)
+    monkeypatch.setattr(podman, "logs", lambda n, tail=200: f"log of {n}")
+    entries = gateway.exit_logs(ex, lines=50)
+    names = [n for n, _ in entries]
+    assert paths.provider_container_name("faketor", "de") in names
+    assert paths.gateway_name(ex.id) in names
+    assert all(text == f"log of {name}" for name, text in entries)
+
+
+def test_exit_logs_are_empty_when_nothing_runs(new_exit, fake):
+    assert gateway.exit_logs(remote(new_exit)) == []  # a plain endpoint, not up
+
+
 def test_down_removes_members_first(new_exit, fake):
     ex = remote(new_exit)
     gateway.up(ex)

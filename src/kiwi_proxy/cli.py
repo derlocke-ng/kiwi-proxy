@@ -223,6 +223,23 @@ def cmd_set(a: argparse.Namespace) -> int:
     return 0
 
 
+def _print_logs(entries: list[tuple[str, str]]) -> None:
+    for i, (name, text) in enumerate(entries):
+        if i:
+            _p("")
+        _p(f"==> {name} <==")
+        _p(text.rstrip() or "(no output yet)")
+
+
+def cmd_logs(a: argparse.Namespace) -> int:
+    ex = exits.resolve_ref(a.ref)
+    entries = gateway.exit_logs(ex, lines=a.lines)
+    if not entries:
+        return _fail(f"{ex.name} has no running containers; `kiwi-proxy up {ex.name}` first")
+    _print_logs(entries)
+    return 0
+
+
 def cmd_rm(a: argparse.Namespace) -> int:
     ex = exits.resolve_ref(a.ref)
     if ex.owner and not a.force:
@@ -440,6 +457,19 @@ def cmd_module(a: argparse.Namespace) -> int:
             + ("" if own else f" — {a.name} does not say where it can exit; any of these")
         )
         return 0
+    if cmd == "logs":
+        if not podman.available():
+            return _fail("podman is not installed")
+        rows = [
+            (c.get("Names") or [""])[0]
+            for c in podman.ps(labels={paths.MODULE_LABEL: a.name})
+            if (c.get("Labels") or {}).get(paths.ROLE_LABEL) in ("provider", "tunnel", "adapter")
+        ]
+        if not rows:
+            _p(f"no {a.name} container is running")
+            return 0
+        _print_logs([(n, podman.logs(n, tail=a.lines)) for n in rows])
+        return 0
     if cmd == "settings":
         prov, manifest = providers.load(a.name)
         ctx = providers.context_for(a.name, manifest)
@@ -635,6 +665,11 @@ def build_parser() -> argparse.ArgumentParser:
     sh.add_argument("--json", action="store_true")
     sh.set_defaults(func=cmd_show)
 
+    lg = sub.add_parser("logs", help="recent logs of an exit's containers (provider, gateway)")
+    lg.add_argument("ref")
+    lg.add_argument("--lines", type=int, default=200, help="how many lines per container")
+    lg.set_defaults(func=cmd_logs)
+
     se = sub.add_parser("set", help="change an exit")
     se.add_argument("ref")
     se.add_argument("--endpoint")
@@ -723,6 +758,9 @@ def build_parser() -> argparse.ArgumentParser:
     mdn = msub.add_parser("down", help="stop a provider")
     mdn.add_argument("name")
     mdn.add_argument("--lease")
+    mlg = msub.add_parser("logs", help="recent logs of a module's running containers")
+    mlg.add_argument("name")
+    mlg.add_argument("--lines", type=int, default=200)
     mse = msub.add_parser("setup", help="build or pull a module's image")
     mse.add_argument("name")
     msub.add_parser("doctor", help="check installed provider modules")

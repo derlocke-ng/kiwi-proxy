@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0
+
+Seeing and choosing a module's exit, and resolving names, made plainer.
+
+- **Container logs.** The exit details has a **View logs** button, and the CLI
+  `kiwi-proxy logs NAME` (and `module logs NAME`), showing the provider's own log
+  — did Mysterium connect, what error is it stuck on — and the gateway's, for any
+  module (tor, vpn, 9proxy, mysterium). A module that declares its `log_marker`
+  gets its own lines quoted in a start-up error, not the daemon's debug noise.
+- **One "Resolve through" choice** replaces the DNS mode plus a separate upstream:
+  the exit itself (.onion, the exit's own resolver), or a named resolver run in the
+  gateway — Quad9, Cloudflare, Mullvad, Google. Ad-blocking applies either way, as
+  before.
+- **The country field can be searched** (it is a real search-as-you-type list now),
+  and the provider picker copies the selected id and resolves a typed short id
+  (`0xcbb6…eb78`), prefix or any unique piece to the full one, so an exit is easy to
+  pin or change by id.
+- **One module sets up at a time** — two image builds at once made podman serialise
+  and look hung — and a build says plainly when the module still needs configuring
+  (Mysterium with no identity yet).
+
 ## 0.5.0
 
 Choosing a module's exit the way Mysterium's own app does.

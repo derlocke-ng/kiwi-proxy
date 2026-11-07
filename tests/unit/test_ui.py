@@ -285,18 +285,23 @@ def test_the_window_starts_empty():
     assert Window(application=None).stack.get_visible_child_name() == "empty"
 
 
-def test_blocklists_are_chosen_per_exit():
+def test_blocklists_and_resolve_through_are_chosen_per_exit():
     ed = _editor()
     ed.name_row.set_text("x")
     ed.endpoint_row.set_text("10.64.0.1:1080")
     assert ed.collect()["dns"].blocklists == ["oisd-big"]  # the default, ticked
-    assert ed.collect()["dns"].upstream == "google"  # the same default as the CLI
+    # One row for where names resolve, standing in for mode + upstream; the default
+    # is a named resolver (Google), as the CLI's default is.
+    assert ed.collect()["dns"].mode == "resolver" and ed.collect()["dns"].upstream == "google"
     ed.list_rows["oisd-big"].set_active(False)
     ed.list_rows["oisd-nsfw"].set_active(True)
     assert ed.collect()["dns"].blocklists == ["oisd-nsfw"]
-    ed.dns_row.set_selected(1)  # remote: names go to the exit; the forwarder still filters
-    assert ed.list_rows["oisd-nsfw"].get_visible() and not ed.upstream_row.get_visible()
-    assert ed.collect()["dns"].blocklists == ["oisd-nsfw"]
+    ed.resolve_row.set_selected(0)  # the exit itself (remote): .onion, the exit's own DNS
+    assert ed.collect()["dns"].mode == "remote"
+    quad9 = next(i for i, (m, u, _l) in enumerate(ed._resolve) if u == "quad9")
+    ed.resolve_row.set_selected(quad9)
+    assert ed.collect()["dns"].mode == "resolver" and ed.collect()["dns"].upstream == "quad9"
+    assert ed.collect()["dns"].blocklists == ["oisd-nsfw"]  # ad-block applies regardless
 
 
 def test_editing_shows_the_exits_lists():
