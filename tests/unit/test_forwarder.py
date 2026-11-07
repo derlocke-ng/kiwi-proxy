@@ -546,3 +546,68 @@ def test_read_credentials_with_no_path_means_no_credentials(tmp_path):
     # took every gateway down at start.
     assert fwd.read_credentials("") == (None, None)
     assert fwd.read_credentials(str(tmp_path)) == (None, None)
+
+
+def test_dns_query_and_first_a_round_trip():
+    q = fwd.dns_query("ifconfig.co")
+    assert q[:2] == b"\x4b\x46" and q.endswith(b"\x08ifconfig\x02co\x00\x00\x01\x00\x01")
+    # an answer: the question echoed, one CNAME then one A, as resolvers send them
+    header = struct.pack("!HHHHHH", 0x4B46, 0x8180, 1, 2, 0, 0)
+    question = q[12:]
+    cname = b"\xc0\x0c" + struct.pack("!HHIH", 5, 1, 60, 3) + b"\x01x\x00"
+    a = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + socket.inet_aton("203.0.113.9")
+    assert fwd.dns_first_a(header + question + cname + a) == "203.0.113.9"
+    nx = struct.pack("!HHHHHH", 0x4B46, 0x8183, 1, 0, 0, 0) + question
+    assert fwd.dns_first_a(nx) is None  # NXDOMAIN
+    assert (
+        fwd.dns_first_a(struct.pack("!H", 0x1111) + header[2:] + question + a) is None
+    )  # not ours
+
+
+async def _roundtrip_resolving(resolver: str | None, answer: str | None, monkeypatch):
+    upstream = FakeUpstream()
+    up_port = await upstream.start()
+    asked = []
+
+    async def fake_resolve(name, server, timeout=5.0):
+        asked.append((name, server))
+        return answer
+
+    monkeypatch.setattr(fwd, "resolve_a", fake_resolve)
+    up = fwd.Upstream("127.0.0.1", up_port, None, None, resolver=resolver)
+    server = await asyncio.start_server(lambda r, w: fwd.handle(r, w, up), "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    r, w = await asyncio.open_connection("127.0.0.1", port)
+    w.write(bytes([5, 1, 0]))
+    await w.drain()
+    assert await r.readexactly(2) == bytes([5, 0])
+    name = b"ifconfig.co"
+    w.write(bytes([5, 1, 0, 3, len(name)]) + name + struct.pack("!H", 443))
+    await w.drain()
+    reply = await r.readexactly(10)
+    body = await r.read() if reply[1] == 0 else b""
+    w.close()
+    server.close()
+    await server.wait_closed()
+    upstream.server.close()
+    return reply[1], body, upstream.requests, asked
+
+
+def test_resolver_mode_connects_the_upstream_by_ipv4(monkeypatch):
+    rep, body, requests, asked = asyncio.run(
+        _roundtrip_resolving("127.0.0.2", "203.0.113.9", monkeypatch)
+    )
+    assert rep == 0 and body == PAYLOAD
+    assert requests == [(1, socket.inet_aton("203.0.113.9"), 443)]  # IPv4, not the name
+    assert asked == [("ifconfig.co", "127.0.0.2")]  # asked of the gateway resolver
+
+
+def test_resolver_mode_refuses_a_name_without_an_a_record(monkeypatch):
+    rep, _body, requests, _asked = asyncio.run(_roundtrip_resolving("127.0.0.2", None, monkeypatch))
+    assert rep == fwd.REP_HOST_UNREACH and requests == []
+
+
+def test_remote_mode_still_passes_the_name_through(monkeypatch):
+    rep, body, requests, asked = asyncio.run(_roundtrip_resolving(None, "203.0.113.9", monkeypatch))
+    assert rep == 0 and body == PAYLOAD
+    assert requests == [(3, b"ifconfig.co", 443)] and asked == []

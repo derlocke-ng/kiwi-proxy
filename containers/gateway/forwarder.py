@@ -59,6 +59,91 @@ USER_PASS = 0x02
 CMD_CONNECT = 0x01
 ATYP_IPV4, ATYP_DOMAIN, ATYP_IPV6 = 0x01, 0x03, 0x04
 REP_OK, REP_GENERAL, REP_NOT_ALLOWED, REP_REFUSED, REP_CMD = 0x00, 0x01, 0x02, 0x05, 0x07
+REP_HOST_UNREACH = 0x04
+
+
+# --------------------------------------------------------------- IPv4 exits
+# A CONNECT by name is normally handed to the upstream to resolve. A SOCKS
+# upstream with IPv6 (Mullvad's) then picks an AAAA record now and then, and the
+# site sees the exit's IPv6 — while a member that resolved through the gateway's
+# resolver (which answers no AAAA) connects by IPv4. Two addresses for one exit
+# is a tell. So in resolver mode the forwarder resolves names itself, through
+# that same resolver, and connects the upstream by IPv4: everything behind the
+# exit is IPv4 to the world. Remote-DNS exits (Tor) still pass names through.
+# The query goes to the resolver's address directly — never getaddrinfo, which
+# would use the gateway container's own resolv.conf, the host's DNS: a leak.
+
+
+def dns_query(name: str, qid: int = 0x4B46) -> bytes:
+    """A standard A query for `name` (RFC 1035; QR=0, RD=1)."""
+    labels = b"".join(bytes([len(p)]) + p for p in name.rstrip(".").encode("idna").split(b"."))
+    return (
+        struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 0)
+        + labels
+        + b"\x00"
+        + struct.pack("!HH", 1, 1)
+    )
+
+
+def dns_first_a(packet: bytes, qid: int = 0x4B46) -> str | None:
+    """The first A record in an answer to dns_query, or None (NXDOMAIN, only
+    CNAMEs, a different transaction)."""
+    if len(packet) < 12 or struct.unpack("!H", packet[:2])[0] != qid:
+        return None
+    _id, flags, qd, an, _ns, _ar = struct.unpack("!HHHHHH", packet[:12])
+    if flags & 0x000F:  # RCODE
+        return None
+    pos = 12
+
+    def skip_name(i: int) -> int:
+        while True:
+            n = packet[i]
+            if n == 0:
+                return i + 1
+            if n & 0xC0 == 0xC0:
+                return i + 2
+            i += 1 + n
+
+    for _ in range(qd):
+        pos = skip_name(pos) + 4
+    for _ in range(an):
+        pos = skip_name(pos)
+        rtype, _rclass, _ttl, rdlen = struct.unpack("!HHIH", packet[pos : pos + 10])
+        pos += 10
+        if rtype == 1 and rdlen == 4:
+            return socket.inet_ntoa(packet[pos : pos + 4])
+        pos += rdlen
+    return None
+
+
+class _DnsClient(asyncio.DatagramProtocol):
+    def __init__(self) -> None:
+        self.done: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
+
+    def datagram_received(self, data: bytes, addr) -> None:
+        if not self.done.done():
+            self.done.set_result(data)
+
+    def error_received(self, exc: Exception) -> None:
+        if not self.done.done():
+            self.done.set_exception(exc)
+
+
+async def resolve_a(name: str, server: str, timeout: float = 5.0) -> str | None:
+    """`name`'s first IPv4 address, asked of `server` (host[:port]) over UDP."""
+    host, _, port = server.partition(":")
+    loop = asyncio.get_running_loop()
+    transport, proto = await loop.create_datagram_endpoint(
+        _DnsClient, remote_addr=(host, int(port or 53))
+    )
+    try:
+        transport.sendto(dns_query(name))
+        packet = await asyncio.wait_for(proto.done, timeout)
+    except (TimeoutError, OSError):
+        return None
+    finally:
+        transport.close()
+    return dns_first_a(packet)
 
 
 INJECT = "inject"
@@ -116,10 +201,12 @@ class Upstream:
         password: str | None,
         mode: str = INJECT,
         blocklist: Blocklist | None = None,
+        resolver: str | None = None,
     ) -> None:
         self.host, self.port = host, port
         self.user, self.password = user or None, password or None
         self.mode = mode
+        self.resolver = resolver or None  # names are resolved here to IPv4 when set
         self.blocklist = blocklist
 
     @property
@@ -337,6 +424,14 @@ async def handle(
             await deny(client_w, REP_NOT_ALLOWED)
             return
 
+        if atyp == ATYP_DOMAIN and up.resolver:
+            ip = await resolve_a(host, up.resolver)
+            if ip is None:
+                LOG.info("no IPv4 address for %s", host)
+                await deny(client_w, REP_HOST_UNREACH)
+                return
+            atyp, host_bytes = ATYP_IPV4, socket.inet_aton(ip)
+
         try:
             up_r, up_w = await asyncio.wait_for(
                 asyncio.open_connection(up.host, up.port), timeout=20
@@ -455,7 +550,8 @@ async def main() -> int:
         LOG.error("passthrough mode needs an exit token in the credentials file")
         return 2
     blocklist = Blocklist(os.environ["KF_BLOCKLIST"]) if os.environ.get("KF_BLOCKLIST") else None
-    up = Upstream(host, port, user, password, mode, blocklist)
+    resolver = os.environ.get("KF_RESOLVER") or None  # set in resolver mode: names -> IPv4 here
+    up = Upstream(host, port, user, password, mode, blocklist, resolver=resolver)
     server = await asyncio.start_server(
         lambda r, w: handle(r, w, up), "127.0.0.1", listen_port, reuse_address=True
     )

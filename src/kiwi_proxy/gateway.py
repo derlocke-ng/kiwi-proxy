@@ -186,6 +186,11 @@ def gateway_spec(
         "KF_FORWARDER_PORT": str(FORWARDER_PORT),
         "KF_DNS_MODE": ex.dns.mode,
         "KF_CREDS_FILE": target,
+        # In resolver mode the forwarder resolves a CONNECT-by-name itself, via
+        # this resolver, and connects the upstream by IPv4: one address family
+        # for everything behind the exit (a SOCKS upstream given a name may pick
+        # AAAA). Remote-DNS exits (Tor) pass names through.
+        **({"KF_RESOLVER": RESOLVER} if ex.dns.mode == "resolver" else {}),
     }
     # Only set when it differs, so an inject gateway's env is what it always was.
     if ex.socks_auth != "inject":

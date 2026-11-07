@@ -79,6 +79,20 @@ def resolve(host: str) -> str:
         raise EndpointError(f"cannot resolve {host!r}: {exc}") from exc
 
 
+def _ipv4_of(host: str) -> bytes | None:
+    """`host` as 4 bytes: a literal as is, a name resolved on this machine to its
+    first IPv4 address; None when there is none (the name is sent instead)."""
+    try:
+        return socket.inet_aton(host)
+    except OSError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return None
+    return socket.inet_aton(infos[0][4][0]) if infos else None
+
+
 def socks5_connect(
     endpoint: Endpoint,
     dest_host: str,
@@ -107,13 +121,20 @@ def socks5_connect(
                 raise EndpointError("proxy rejected the credentials")
         elif method != 0x00:
             raise EndpointError(f"proxy demands unsupported auth method {method:#x}")
-        host_bytes = dest_host.encode()
-        sock.sendall(
-            b"\x05\x01\x00\x03"
-            + bytes([len(host_bytes)])
-            + host_bytes
-            + dest_port.to_bytes(2, "big")
-        )
+        # By IPv4 where we can: a SOCKS upstream given a name may pick its AAAA
+        # record, and the exit the pre-flight reports would then differ from the
+        # one the gateway's members get (the forwarder connects by IPv4 too).
+        ipv4 = _ipv4_of(dest_host)
+        if ipv4:
+            sock.sendall(b"\x05\x01\x00\x01" + ipv4 + dest_port.to_bytes(2, "big"))
+        else:
+            host_bytes = dest_host.encode()
+            sock.sendall(
+                b"\x05\x01\x00\x03"
+                + bytes([len(host_bytes)])
+                + host_bytes
+                + dest_port.to_bytes(2, "big")
+            )
         reply = _recv_exact(sock, 4)
         if reply[1] != 0x00:
             raise EndpointError(f"proxy refused the connection (code {reply[1]})")

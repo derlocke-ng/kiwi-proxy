@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+- **An exit is IPv4 to the world.** A CONNECT by name used to be handed to the
+  upstream to resolve, and a SOCKS upstream with IPv6 (Mullvad's) picked an AAAA
+  record now and then — so `kiwi-proxy check`, a `curl` through the host port and
+  the probes showed the exit's IPv6, while a member that resolved through the
+  gateway's resolver (which answers no AAAA) connected by IPv4. Two addresses for
+  one exit is a tell. In resolver mode the forwarder now resolves names itself,
+  through that resolver, and connects the upstream by IPv4; a name with no A
+  record is refused (host unreachable). Remote-DNS exits (Tor) pass names through
+  as before. The pre-flight measurement from this machine (`up`, `test`) asks by
+  IPv4 as well, so the exit it reports is the one members get. `kiwi-proxy setup`
+  rebuilds the gateway image.
+
 ## 0.6.1
 
 - **Check the exit works on an exit that is down**: the gateway is brought up for

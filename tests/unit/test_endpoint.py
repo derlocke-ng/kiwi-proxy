@@ -69,3 +69,55 @@ def test_parse_geo_reads_the_ipinfo_shape():
 def test_parse_geo_rejects_garbage():
     with pytest.raises(EndpointError):
         parse_geo("<html>nope</html>")
+
+
+def _fake_socks5(replies: list) -> int:
+    """A SOCKS5 server on the loopback that records one CONNECT request."""
+    import socket
+    import threading
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve() -> None:
+        conn, _ = srv.accept()
+        with conn:
+            conn.recv(3)
+            conn.sendall(b"\x05\x00")
+            head = conn.recv(4)
+            if head[3] == 0x01:
+                rest = conn.recv(4 + 2)
+            else:
+                n = conn.recv(1)[0]
+                rest = conn.recv(n + 2)
+            replies.append((head[3], rest[:-2]))
+            conn.sendall(b"\x05\x00\x00\x01" + b"\x00" * 6)
+        srv.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv.getsockname()[1]
+
+
+def test_socks5_connect_asks_by_ipv4_when_the_name_has_one(monkeypatch):
+    import socket
+
+    from kiwi_proxy import endpoint
+    from kiwi_proxy.models import Endpoint
+
+    seen: list = []
+    port = _fake_socks5(seen)
+    monkeypatch.setattr(endpoint, "_ipv4_of", lambda host: socket.inet_aton("203.0.113.9"))
+    endpoint.socks5_connect(Endpoint(host="127.0.0.1", port=port), "ifconfig.co", 443).close()
+    assert seen == [(0x01, socket.inet_aton("203.0.113.9"))]  # IPv4, not the name
+
+
+def test_socks5_connect_falls_back_to_the_name(monkeypatch):
+    from kiwi_proxy import endpoint
+    from kiwi_proxy.models import Endpoint
+
+    seen: list = []
+    port = _fake_socks5(seen)
+    monkeypatch.setattr(endpoint, "_ipv4_of", lambda host: None)
+    endpoint.socks5_connect(Endpoint(host="127.0.0.1", port=port), "onion.example", 80).close()
+    assert seen == [(0x03, b"onion.example")]
