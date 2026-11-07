@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -150,6 +152,15 @@ class ExitEditor(Adw.Dialog):
         self._lease: str | None = None
         self.lease_row = Adw.ActionRow(title="Exit", subtitle=ANY_LEASE, use_markup=False)
         self.lease_row.set_subtitle_lines(0)
+        self.lease_copy = Gtk.Button(
+            icon_name="edit-copy-symbolic",
+            valign=Gtk.Align.CENTER,
+            tooltip_text="Copy the id",
+            visible=False,
+        )
+        self.lease_copy.add_css_class("flat")
+        self.lease_copy.connect("clicked", self._copy_lease)
+        self.lease_row.add_suffix(self.lease_copy)
         self.lease_button = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
         self.lease_button.connect("clicked", self._on_choose_lease)
         self.lease_row.add_suffix(self.lease_button)
@@ -299,6 +310,7 @@ class ExitEditor(Adw.Dialog):
         module = self.module
         self.endpoint_row.set_visible(module is None)
         self.lease_row.set_visible(module is not None)
+        self.lease_row.set_title(_noun_of(module).capitalize())
         self.country_row.set_visible(module is not None)
         # Another module's exit means nothing here; the edited exit's own is kept.
         own = self.ex.endpoint.lease if self.ex and self.ex.endpoint.module == module else None
@@ -367,12 +379,18 @@ class ExitEditor(Adw.Dialog):
         endpoint, and the row says which it is."""
         self._lease = lease_id or None
         self.lease_row.set_tooltip_text(lease_id or "")
+        self.lease_copy.set_visible(bool(lease_id))
         if not lease_id:
             self.lease_row.set_subtitle(ANY_LEASE)
         elif lease is None:
-            self.lease_row.set_subtitle(Lease(id=lease_id).short_id)
+            self.lease_row.set_subtitle(lease_id)
         else:
             self.lease_row.set_subtitle(lease_line(lease))
+
+    def _copy_lease(self, *_args) -> None:
+        if self._lease:
+            Gdk.Display.get_default().get_clipboard().set(self._lease)
+            self._say(f"Copied {self._lease}", error=False)
 
     def _on_choose_lease(self, *_args) -> None:
         if self.module:
@@ -576,7 +594,9 @@ class ExitDetails(Adw.Dialog):
             up.add(
                 _row(
                     "Provider",
-                    f"{ex.endpoint.module} · lease {ex.endpoint.lease or 'default'} · country {ex.endpoint.country or 'any'}",
+                    provider_line(ex, _noun_of(ex.endpoint.module)),
+                    copy=ex.endpoint.lease,
+                    toast=toast,
                 )
             )
         if ex.last_exit:
@@ -643,9 +663,28 @@ class ExitDetails(Adw.Dialog):
 
 
 def lease_line(lease: Lease) -> str:
-    """One line for a lease: short id, place, kind and what the module adds."""
+    """One line for a lease: the full id (to be read and copied), place, kind and
+    what the module adds."""
     place = lease.city or lease.country
-    return " · ".join(x for x in (lease.short_id, place, lease.kind, lease.detail, lease.isp) if x)
+    return " · ".join(x for x in (lease.id, place, lease.kind, lease.detail, lease.isp) if x)
+
+
+def _noun_of(module: str | None) -> str:
+    """What the module calls one of its leases ("node" for Mysterium); "exit" when
+    it does not say or cannot be loaded."""
+    if not module:
+        return "exit"
+    try:
+        return providers.lease_noun_of(providers.load(module)[0])
+    except Exception:  # noqa: BLE001 - wording only
+        return "exit"
+
+
+def provider_line(ex, noun: str) -> str:
+    """The details row for a module exit: module, the chosen lease by the module's
+    name for it, the country."""
+    chosen = ex.endpoint.lease or "the module's choice"
+    return f"{ex.endpoint.module} · {noun} {chosen} · country {ex.endpoint.country or 'any'}"
 
 
 class LeasePicker(Adw.Dialog):
@@ -663,6 +702,8 @@ class LeasePicker(Adw.Dialog):
         self._toast = toast
         self._leases: list[Lease] = []
         self._kind: str | None = None
+        self._mirroring = False
+        self.noun = "exit"
         self.rows: list[Adw.ActionRow] = []
         where = f" in {country.upper()}" if country else ""
         super().__init__(
@@ -700,6 +741,7 @@ class LeasePicker(Adw.Dialog):
         self.listbox.add_css_class("boxed-list")
         self.listbox.set_filter_func(self._filter)
         self.listbox.connect("row-activated", lambda _lb, row: self._pick(row.lease_id))
+        self.listbox.connect("row-selected", self._on_selected)
         any_row = Adw.ActionRow(use_markup=False)
         any_row.set_title(ANY_LEASE)
         any_row.set_subtitle("the module picks")
@@ -710,9 +752,18 @@ class LeasePicker(Adw.Dialog):
         box.append(Gtk.ScrolledWindow(vexpand=True, child=self.listbox))
 
         force = Adw.PreferencesGroup()
-        self.id_row = Adw.EntryRow(title="Or an id to force — one the list does not show")
-        if current and current not in [x.id for x in self._leases]:
+        # The chosen id, in full: a clicked row lands here (to read and copy), and
+        # one typed here forces an id the list does not show.
+        self.id_row = Adw.EntryRow(title=self._id_title())
+        if current:
             self.id_row.set_text(current)
+        self.id_row.connect("changed", self._on_typed)
+        copy_id = Gtk.Button(
+            icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Copy this id"
+        )
+        copy_id.add_css_class("flat")
+        copy_id.connect("clicked", self._copy_selected)
+        self.id_row.add_suffix(copy_id)
         use_id = Gtk.Button(label="Use this id", valign=Gtk.Align.CENTER)
         use_id.connect("clicked", lambda *_: self._pick(self.id_row.get_text().strip()))
         self.id_row.add_suffix(use_id)
@@ -732,32 +783,64 @@ class LeasePicker(Adw.Dialog):
         def work():
             prov, manifest = providers.load(module)
             ctx = providers.context_for(module, manifest)
-            return manifest, providers.leases_for(prov, ctx, country)
+            return manifest, providers.lease_noun_of(prov), providers.leases_for(prov, ctx, country)
 
         def done(result) -> None:
-            manifest, leases = result
+            manifest, noun, leases = result
+            self.noun = noun
             self._leases = sorted(leases, key=lambda x: -(x.quality or 0))
             for lease in self._leases:
                 row = self._row_for(lease)
                 self.rows.append(row)
                 self.listbox.append(row)
                 if lease.id == self.current:
-                    self.listbox.select_row(row)
-                    self.id_row.set_text("")
+                    self.listbox.select_row(row)  # its full id lands in the id row
             self._build_kinds()
             n = len(self._leases)
             where = f" in {country.upper()}" if country else ""
+            self.set_title(f"{manifest.title} {noun}{where}")
+            self.id_row.set_title(self._id_title())
             self.status.set_text(
-                f"{n} to choose from{where}, best first"
+                f"{n} {providers.plural(noun, n)} to choose from{where}, best first — "
+                "click one to see its full id"
                 if n
                 else f"{manifest.title} offers nothing to choose{where}; "
-                "the module's choice, or an id typed below"
+                f"the module's choice, or a {noun} id typed below"
             )
 
         def failed(exc: Exception) -> None:
             self.status.set_text(f"module: {exc} — an id can still be typed below")
 
         worker.run(work, done, failed)
+
+    def _id_title(self) -> str:
+        example = self._leases[0].short_id if self._leases else "0x…"
+        return (
+            f"{self.noun.capitalize()} id, {example} for example — "
+            "the selected one, or type one to force it"
+        )
+
+    def _on_selected(self, _lb, row) -> None:
+        """A clicked row shows its full id in the id row, where it can be read and
+        copied. Deselecting leaves whatever is typed there."""
+        if row is None:
+            return
+        self._mirroring = True
+        try:
+            self.id_row.set_text(getattr(row, "lease_id", None) or "")
+        finally:
+            self._mirroring = False
+
+    def _on_typed(self, *_args) -> None:
+        """Typing an id of one's own un-selects the list: the typed one is meant."""
+        if self._mirroring:
+            return
+        row = self.listbox.get_selected_row()
+        if (
+            row is not None
+            and (getattr(row, "lease_id", None) or "") != self.id_row.get_text().strip()
+        ):
+            self.listbox.unselect_all()
 
     def _row_for(self, lease: Lease) -> Adw.ActionRow:
         place = lease.city or lease.country or ""
@@ -1004,7 +1087,28 @@ class ModulesDialog(Adw.Dialog):
                 bits.append(prov.configured(ctx) or "not configured")
             return " · ".join(bits)
 
-        worker.run(work, row.set_subtitle, lambda exc: row.set_subtitle(f"{name} · {exc}"))
+        def done(text: str) -> None:
+            row.set_subtitle(text)
+            found = re.search(r"0x[0-9a-fA-F]{40}", text)  # a Mysterium identity
+            if found and getattr(row, "copy_button", None) is None:
+                identity = found.group(0)
+                button = Gtk.Button(
+                    icon_name="edit-copy-symbolic",
+                    valign=Gtk.Align.CENTER,
+                    tooltip_text="Copy the identity",
+                )
+                button.add_css_class("flat")
+
+                def on_copy(*_a) -> None:
+                    Gdk.Display.get_default().get_clipboard().set(identity)
+                    if self._toast:
+                        self._toast(f"Copied {identity}")
+
+                button.connect("clicked", on_copy)
+                row.add_suffix(button)
+                row.copy_button = button
+
+        worker.run(work, done, lambda exc: row.set_subtitle(f"{name} · {exc}"))
 
     def _on_configure(self, _button, name: str, row: Adw.ActionRow) -> None:
         def done(lines: list[str]) -> None:

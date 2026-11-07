@@ -146,6 +146,7 @@ class Provider(Protocol):
     ``ContainerProvider`` and overrides only ``container_spec`` and ``leases``."""
 
     manifest: ProviderManifest
+    lease_noun: str  # "node", "server", "port"… — see ContainerProvider
 
     @property
     def name(self) -> str: ...
@@ -184,6 +185,11 @@ class ContainerProvider:
     # How long to wait for a freshly started provider container to come up and
     # get an address on the bridge. VPN handshakes and Tor bootstraps are slow.
     ready_timeout: float = 90.0
+
+    # What this module calls one of its leases, for the app and the CLI: a
+    # Mysterium "node", a VPN "server", a 9proxy "port". Read with getattr, so an
+    # older module without it is an "exit".
+    lease_noun = "exit"
 
     @property
     def name(self) -> str:

@@ -178,6 +178,14 @@ cellular, …), `quality` (higher is better; the picker sorts by it) and `isp`
 where you know them — the picker's toggles, order and search use them, and
 `Lease.short_id` / `Lease.matches(text)` are how ids are shown and searched.
 
+### What a lease is called
+
+A module may say what one of its leases is — `lease_noun = "node"` on the provider
+class (Mysterium), `"server"` (a VPN), `"port"` (9proxy). The app's picker, the
+exit editor and `kiwi-proxy module leases` then speak that language ("137 nodes to
+choose from", a row titled *Node*, "Node id, 0xcbb6…eb78 for example"). Without it
+a lease is an "exit".
+
 ### Countries
 
 `countries(ctx)` says where a module can exit: `Country(code, name, count)`, the

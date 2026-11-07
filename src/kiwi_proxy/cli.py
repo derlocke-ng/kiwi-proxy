@@ -450,7 +450,7 @@ def cmd_module(a: argparse.Namespace) -> int:
             _p(f"{lease.id:{width}}  " + "  ".join(b for b in bits if b))
         tail = f"{len(shown)} of {len(leases)}" if len(shown) != len(leases) else f"{len(leases)}"
         _p(
-            f"{tail} leases"
+            f"{tail} {providers.plural(providers.lease_noun_of(prov), len(leases))}"
             + (" — the picker in the app filters the same way" if len(leases) > 40 else "")
         )
         return 0

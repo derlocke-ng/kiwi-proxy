@@ -47,3 +47,13 @@ __all__ = [
     "manages",
     "manifest_of",
 ]
+
+
+def lease_noun_of(prov) -> str:
+    """What the module calls one lease — "node", "server", "port"; "exit" when it
+    does not say (an older module)."""
+    return getattr(prov, "lease_noun", None) or "exit"
+
+
+def plural(noun: str, n: int) -> str:
+    return noun if n == 1 else f"{noun}s"

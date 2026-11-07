@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.2
+
+- **The picker shows the id you clicked.** Choosing a module's exit — a Mysterium
+  node — showed short ids in the list and offered a field "Or an id to force"
+  that had nothing to do with the list. Clicking a row now puts its full id into
+  that field, where it can be read and copied (a copy button sits beside it);
+  typing there forces an id the list does not show, as before. The field says
+  what it wants, by example: "Node id, 0xcbb6…eb78 for example".
+- **Modules name their leases.** A provider may set `lease_noun` ("node",
+  "server", "port"); the picker, the editor's row (titled *Node* instead of
+  *Exit*, with the full id and a copy button), the details dialog ("mysterium ·
+  node 0x… · country de", copyable) and `module leases` use it. A module that
+  does not say still has "exits".
+- The modules dialog offers to copy a configured identity (0x…) when the module
+  reports one.
+
 ## 0.7.1
 
 - **A member that must keep its contents is kept.** Taking an exit down — the

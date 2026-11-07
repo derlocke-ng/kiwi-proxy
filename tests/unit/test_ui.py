@@ -181,15 +181,19 @@ def test_the_country_row_is_a_list_the_module_fills():
     ]
     ed.country_row.set_selected(2)
     assert ed.country == "SE"
+    assert ed.lease_row.get_title() == "Node"  # the module's word for a lease
     # The exit is chosen in the picker, for the country chosen, and lands on the row.
     picked = []
     picker = LeasePicker("fakemyst", ed.country, ed._lease, lambda i, x: picked.append((i, x)))
     _pump(lambda: len(picker.rows) == 1)
-    assert picker.status.get_text().startswith("1 to choose from in SE")
+    assert picker.status.get_text().startswith("1 node to choose from in SE")
+    assert picker.get_title() == "Fake Myst node in SE"
+    assert picker.id_row.get_title().startswith("Node id, 0xse1 for example")
     picker._pick("0xse1")
     assert picked[0][0] == "0xse1" and picked[0][1].kind == "hosting"
     ed._set_lease(*picked[0])
     assert ed.lease_row.get_subtitle() == "0xse1 · Kista · hosting · Bahnhof"
+    assert ed.lease_copy.get_visible()
     ed.name_row.set_text("north")
     form = ed.collect()
     assert form["endpoint"].module == "fakemyst"
@@ -227,7 +231,7 @@ def test_the_picker_filters_by_kind_and_search_and_forces_an_id():
     _pump(lambda: len(picker.rows) == 2)
     assert [r.lease_id for r in picker.rows] == ["0xse1", "0xde1"]  # best quality first
     assert picker.listbox.get_selected_row().lease_id == "0xde1"  # the current one
-    assert picker.id_row.get_text() == ""
+    assert picker.id_row.get_text() == "0xde1"  # shown in full, to read and copy
     buttons, child = [], picker.kinds.get_first_child()
     while child is not None:
         buttons.append(child)
@@ -243,10 +247,18 @@ def test_the_picker_filters_by_kind_and_search_and_forces_an_id():
     assert picker._kind == "hosting"
     assert picker._filter(rows["0xse1"]) and not picker._filter(rows["0xde1"])
     assert picker._filter(picker.listbox.get_row_at_index(0))  # the module's own choice stays
-    picker.listbox.unselect_all()
+    # Clicking a row shows its full id; typing another id means that one instead.
+    picker.listbox.select_row(rows["0xse1"])
+    assert picker.id_row.get_text() == "0xse1"
     picker.id_row.set_text("0xforced")
+    assert picker.listbox.get_selected_row() is None
     picker._on_use()
     assert picked == [("0xforced", None)]
+    # The details dialog names the node by the module's word and offers its id.
+    from kiwi_proxy.ui.dialogs import provider_line
+
+    ex = exits.create("de", exits.module_endpoint("fakemyst", lease="0xde1", country="de"))
+    assert provider_line(ex, "node") == "fakemyst · node 0xde1 · country de"
 
 
 def test_details_and_modules_build(monkeypatch):

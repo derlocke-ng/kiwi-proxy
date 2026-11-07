@@ -17,6 +17,7 @@ MANIFEST = ProviderManifest(name="fakemyst", title="Fake Myst", socks_port=1080,
 
 class FakeMyst(ContainerProvider):
     manifest = MANIFEST
+    lease_noun = "node"
 
     def container_spec(self, ctx, *, lease=None, country=None):
         return ContainerSpec(name=ctx.container_name(lease), image=ctx.image, network=ctx.network)
@@ -119,7 +120,7 @@ def test_cli_settings_config_and_leases(fakemyst, capsys):
     assert cli.main(["module", "leases", "fakemyst", "--kind", "residential"]) == 0
     out = capsys.readouterr().out
     assert "0xde1  residential  DE Berlin  Telekom" in out and "0xse1" not in out
-    assert out.rstrip().endswith("1 of 2 leases")
+    assert out.rstrip().endswith("1 of 2 nodes")  # the module's word for a lease
     assert cli.main(["module", "leases", "fakemyst", "--search", "bahn"]) == 0
     out = capsys.readouterr().out
     assert "0xse1" in out and "0xde1" not in out
