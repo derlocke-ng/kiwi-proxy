@@ -1,4 +1,4 @@
-.PHONY: run gui images test leak lint fmt setup
+.PHONY: run gui images smoke test leak lint fmt setup
 PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 export PYTHONPATH := src:.
 
@@ -15,6 +15,13 @@ gui:
 
 images:
 	podman build -t kiwi-proxy/gateway:latest -f containers/gateway/Containerfile containers/gateway
+
+# Build the gateway image and start it both ways kiwi-proxy does, against a dummy
+# SOCKS5 (tests/smoke/gateway.sh) — what ci.yml does, from a clean cache there.
+# A distinct tag, so a working kiwi-proxy/gateway:latest is left alone.
+smoke:
+	podman build $(BUILD_FLAGS) -t kiwi-proxy/gateway:smoke -f containers/gateway/Containerfile containers/gateway
+	bash tests/smoke/gateway.sh kiwi-proxy/gateway:smoke
 
 test:
 	$(PY) -m pytest tests/unit -q

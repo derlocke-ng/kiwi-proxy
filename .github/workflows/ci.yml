@@ -24,3 +24,19 @@ jobs:
         env:
           KIWI_SERVER_SRC: ${{ github.workspace }}/kiwi-server
           PYTHONPATH: src:.
+
+  # The gateway image, built from a clean cache and started both ways kiwi-proxy
+  # starts it, against a dummy SOCKS5 (tests/smoke/gateway.sh). The unit tests
+  # passed while 0.2.0's gateway died at start, because nothing had ever run the
+  # container; this does. images.yml is the publishing build for kiwi-server
+  # machines and is not this.
+  gateway-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: for f in tests/smoke/gateway.sh containers/gateway/entrypoint.sh; do bash -n "$f"; done
+      - run: podman version && podman info --format '{{.Host.NetworkBackend}} rootless={{.Host.Security.Rootless}}'
+      - name: build, without a cache that could hide a broken step
+        run: podman build --no-cache -t kiwi-proxy/gateway:smoke -f containers/gateway/Containerfile containers/gateway
+      - name: start it, with and without a host listener
+        run: bash tests/smoke/gateway.sh kiwi-proxy/gateway:smoke
