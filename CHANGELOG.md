@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.3
+
+- **A bigger window, and the size you leave it at.** The window opened at
+  760×620, smaller than its own dialogs (the node picker is 720×780), so those
+  came up squeezed. It now opens at 1040×840, and the size and maximized state
+  it has when closed are kept in `config/window.json` for the next start.
+
 ## 0.7.2
 
 - **The picker shows the id you clicked.** Choosing a module's exit — a Mysterium

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -12,6 +14,36 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 from .. import dns, exits, gateway, paths, podman  # noqa: E402
 from . import worker  # noqa: E402
 from .dialogs import ExitDetails, ExitEditor, ModulesDialog, proxy_url  # noqa: E402
+
+# A window large enough for the largest dialog (the picker is 720×780) to open at
+# its own size instead of being squeezed; the size it had when last closed wins.
+DEFAULT_SIZE = (1040, 840)
+MIN_SIZE = (640, 480)
+
+
+def saved_geometry() -> tuple[int, int, bool]:
+    """(width, height, maximized) from config/window.json, else the default."""
+    try:
+        d = json.loads((paths.config_dir() / "window.json").read_text())
+        width = max(int(d["width"]), MIN_SIZE[0])
+        height = max(int(d["height"]), MIN_SIZE[1])
+        return width, height, bool(d.get("maximized"))
+    except (OSError, ValueError, KeyError, TypeError):
+        return DEFAULT_SIZE[0], DEFAULT_SIZE[1], False
+
+
+def remember_geometry(window) -> None:
+    """Keep the window's size for the next start. GTK 4 tracks the user's resizing
+    in the default size, and keeps the un-maximized one while maximized."""
+    width, height = window.get_default_size()
+    try:
+        paths.config_dir().mkdir(parents=True, exist_ok=True)
+        (paths.config_dir() / "window.json").write_text(
+            json.dumps({"width": width, "height": height, "maximized": window.is_maximized()})
+        )
+    except OSError:
+        pass
+
 
 REFRESH_SECONDS = 4
 
@@ -28,7 +60,11 @@ def _members_of(ex) -> list[str]:
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, **kwargs) -> None:
-        super().__init__(default_width=760, default_height=620, title="Kiwi Proxy", **kwargs)
+        width, height, maximized = saved_geometry()
+        super().__init__(default_width=width, default_height=height, title="Kiwi Proxy", **kwargs)
+        if maximized:
+            self.maximize()
+        self.connect("close-request", self._on_close_request)
         self._rows: dict[str, Adw.ActionRow] = {}
         self._busy: set[str] = set()
         self._up: dict[str, dict] = {}  # exit id -> gateway row from gateway.running()
@@ -117,6 +153,10 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add_seconds(REFRESH_SECONDS, self._tick)
 
     # ------------------------------------------------------------------ list
+    def _on_close_request(self, *_args) -> bool:
+        remember_geometry(self)
+        return False  # and close
+
     def _tick(self) -> bool:
         self.refresh(rebuild=False)
         return True

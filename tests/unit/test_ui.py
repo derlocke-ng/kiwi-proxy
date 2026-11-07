@@ -380,3 +380,22 @@ def test_the_row_menu_has_duplicate():
 
     win = Window(application=None)
     assert win.lookup_action("duplicate") is not None
+
+
+def test_the_window_opens_large_and_remembers_its_size(monkeypatch):
+    import json
+
+    from kiwi_proxy import gateway, paths
+    from kiwi_proxy.ui.window import DEFAULT_SIZE, Window
+
+    monkeypatch.setattr(gateway, "running", lambda: [])  # no podman poll from the test windows
+    win = Window(application=None)
+    assert win.get_default_size() == DEFAULT_SIZE  # room for the picker (720×780)
+    win.set_default_size(900, 700)
+    win._on_close_request()
+    saved = json.loads((paths.config_dir() / "window.json").read_text())
+    assert (saved["width"], saved["height"], saved["maximized"]) == (900, 700, False)
+    again = Window(application=None)
+    assert again.get_default_size() == (900, 700)
+    (paths.config_dir() / "window.json").write_text('{"width": 10, "height": 10}')
+    assert Window(application=None).get_default_size() == (640, 480)  # never unusably small
