@@ -344,6 +344,59 @@ def test_a_held_exit_survives_release(new_exit, fake):
     assert paths.gateway_name(ex.id) not in fake.containers
 
 
+def test_probe_brings_a_down_exit_up_measures_and_takes_it_down(new_exit, fake):
+    ex = remote(new_exit)
+    exits.save(ex)
+    info = gateway.probe(ex)
+    assert info.ip == "198.51.100.7"  # measured through the gateway it brought up
+    assert paths.gateway_name(ex.id) not in fake.containers  # and took down again
+    assert exits.load(ex.id).last_exit.ip == "198.51.100.7"  # recorded on the exit
+
+
+def test_probe_leaves_a_running_exit_running(new_exit, fake):
+    ex = remote(new_exit)
+    exits.save(ex)
+    gateway.up(ex, measure=False)
+    gateway.probe(ex)
+    assert paths.gateway_name(ex.id) in fake.containers
+
+
+def test_provider_alive_says_when_a_tunnel_gave_up(new_exit, fake):
+    install_module()
+    ex = remote(new_exit, module="faketor", lease="de", port=9050)
+    gateway.up(ex, measure=False)
+    assert gateway.provider_alive(ex) is True
+    fake.rm(paths.provider_container_name("faketor", "de"))  # the node died
+    assert gateway.provider_alive(ex) is False
+    assert gateway.provider_alive(remote(new_exit)) is None  # a plain endpoint
+
+
+def test_heal_restarts_a_dead_provider_behind_its_gateway(new_exit, fake):
+    install_module()
+    ex = remote(new_exit, module="faketor", lease="de", port=9050)
+    exits.save(ex)
+    gw = gateway.up(ex, measure=False)
+    prov = paths.provider_container_name("faketor", "de")
+    fake.rm(prov)  # the node failed closed and exited
+    assert gateway.provider_alive(ex) is False
+    assert gateway.heal() == [gw.name]
+    assert prov in fake.containers and gw.name in fake.containers  # back, gateway kept
+    assert fake.started.count(prov) == 2
+    assert gateway.heal() == []  # nothing to do when all is well
+
+
+def test_heal_tears_the_gateway_down_when_the_provider_moves(new_exit, fake):
+    install_module()
+    ex = remote(new_exit, module="faketor", lease="de", port=9050)
+    exits.save(ex)
+    gw = gateway.up(ex, measure=False)
+    fake.rm(paths.provider_container_name("faketor", "de"))
+    fake.provider_ip = "10.89.231.99"  # it would come back elsewhere
+    healed = gateway.heal()
+    assert healed and "torn down" in healed[0]
+    assert gw.name not in fake.containers
+
+
 def test_exit_logs_cover_the_provider_and_the_gateway(new_exit, fake, monkeypatch):
     install_module()
     ex = remote(new_exit, module="faketor", lease="de", port=9050)

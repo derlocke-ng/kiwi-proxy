@@ -123,6 +123,16 @@ manifest). Override `ready()` when the upstream has a slow handshake — a VPN t
 or a Tor bootstrap — so kiwi-proxy waits for the SOCKS5 port, not just a running
 container.
 
+### When a tunnel dies
+
+A tunnel module's node that loses its session should fail closed and exit (a
+`FATAL` line, then `exit 1`), not try to reconnect under its own kill switch.
+kiwi-proxy notices the provider gone behind a running gateway (`gateway.heal`,
+from the app's poll and `kiwi-proxy reap`) and starts the node and its adapter
+again on the same static address; the gateway and its members keep their route.
+Tunnel containers therefore get no podman restart policy — a restarted tunnel
+would leave its adapter in the old namespace.
+
 ### Saying what went wrong
 
 Log from your entrypoint with a fixed prefix (`kf-myst: connecting to …`,

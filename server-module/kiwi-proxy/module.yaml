@@ -6,7 +6,7 @@ schema_version: "1.0"
 module:
   name: kiwi-proxy
   title: kiwi-proxy exits
-  version: 0.6.0
+  version: 0.6.1
   description: "Sealed SOCKS5 exits for mesh clients — each one a kiwi-proxy gateway whose only route is one upstream (a VPN provider's SOCKS5, a residential proxy, this stack's Tor), published on the host's mesh address"
   category: network
   node_types: [master, node]

@@ -387,7 +387,12 @@ class TunnelProvider(ContainerProvider):
                 f"{self.name}: tunnel_spec must attach to {ctx.network!r}, got {tunnel.network!r}"
             )
         tunnel.ip = ctx.static_ip(lease)
-        tunnel.restart = tunnel.restart or "on-failure"
+        # No restart policy for a tunnel: its adapter joined the netns of *this*
+        # container, and a podman restart gives the tunnel a new one with the
+        # adapter left behind in the old — an exit that looks up and answers
+        # nothing. A tunnel that dies is restarted together with its adapter by
+        # gateway.heal(), behind the gateway that stays.
+        tunnel.restart = None
         _label(tunnel, self.name, lease, role="tunnel")
         if not podman.is_running(tunnel.name):
             # The adapter joins the tunnel's netns (--network container:), which

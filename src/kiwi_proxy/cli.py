@@ -291,13 +291,15 @@ def cmd_name(a: argparse.Namespace) -> int:
 def cmd_check(a: argparse.Namespace) -> int:
     ex = exits.resolve_ref(a.ref)
     name = paths.gateway_name(ex.id)
-    if not podman.is_running(name):
-        return _fail(f"{ex.name} is not up; kiwi-proxy up {ex.name}")
+    if podman.is_running(name) and gateway.provider_alive(ex) is False:
+        return _fail(
+            f"{ex.name}: its provider container is gone (the tunnel gave up); "
+            f"`kiwi-proxy logs {ex.name}` says why, `kiwi-proxy up --replace {ex.name}` restarts it"
+        )
     try:
-        info = gateway.measure_exit(name)
-    except gateway.GatewayError as exc:
+        info = gateway.probe(ex)
+    except (gateway.GatewayError, providers.ProviderError, endpoint.EndpointError) as exc:
         return _fail(f"{ex.name}: {exc}")
-    exits.record_exit(ex, info)
     if a.json:
         return _json(info.model_dump(mode="json"))
     _p(f"{ex.name}: {info.ip} {info.country or '?'} {info.city or ''} {info.asn or ''}".rstrip())
@@ -337,8 +339,14 @@ def cmd_ps(a: argparse.Namespace) -> int:
 
 
 def cmd_reap(a: argparse.Namespace) -> int:
+    healed = gateway.heal()
+    for line in healed:
+        _p(line if ": " in line else f"{line}: provider restarted behind it")
     cleaned = gateway.reap()
-    _p(", ".join(cleaned) + " torn down" if cleaned else "nothing orphaned")
+    for name in cleaned:
+        _p(f"{name} torn down")
+    if not healed and not cleaned:
+        _p("nothing orphaned")
     return 0
 
 

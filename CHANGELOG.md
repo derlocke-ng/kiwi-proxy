@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.1
+
+- **Check the exit works on an exit that is down**: the gateway is brought up for
+  the measurement and taken down again (`kiwi-proxy check NAME` too), so an exit
+  need not be running to learn where it leaves. kiwi-fox shows that record.
+- **A provider that died is started again behind its gateway.** A tunnel node
+  whose session ended fails closed and exits (kiwi-plugin-myst 0.5.1);
+  `gateway.heal()` — run by the app's poll and by `kiwi-proxy reap` — starts a
+  fresh node and adapter on the same pinned address, and the gateway, its members
+  and their route stay. Tunnel containers get no podman restart policy any more:
+  a restarted tunnel lost its adapter to the old namespace and answered nothing.
+- A module exit whose provider container has gone says so in its row ("provider
+  gone — see its logs") and from `check`, instead of a bare SOCKS code; and the
+  probe's SOCKS refusals are spelled out ("network unreachable at the exit — a
+  tunnel exit whose tunnel is down fails closed").
+
 ## 0.6.0
 
 Seeing and choosing a module's exit, and resolving names, made plainer.

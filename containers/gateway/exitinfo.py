@@ -41,7 +41,18 @@ def connect(host: str, port: int, timeout: float = 30.0) -> socket.socket:
     sock.sendall(b"\x05\x01\x00\x03" + bytes([len(name)]) + name + port.to_bytes(2, "big"))
     reply = recv_exact(sock, 4)
     if reply[1] != 0x00:
-        raise OSError(f"the exit refused {host}:{port} (code {reply[1]})")
+        reasons = {
+            1: "general failure at the exit",
+            2: "not allowed by the exit's rules",
+            3: "network unreachable at the exit — a tunnel exit whose tunnel is down fails closed",
+            4: "host unreachable from the exit",
+            5: "connection refused by the exit",
+            6: "TTL expired",
+            7: "command not supported",
+            8: "address type not supported",
+        }
+        why = reasons.get(reply[1], f"code {reply[1]}")
+        raise OSError(f"the exit refused {host}:{port}: {why}")
     recv_exact(sock, {0x01: 4, 0x04: 16}.get(reply[3], 0) + 2)
     return sock
 

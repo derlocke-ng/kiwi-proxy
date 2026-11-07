@@ -518,6 +518,37 @@ def release(exit_id: str, *, ignore: tuple[str, ...] = ()) -> bool:
 
 
 # ------------------------------------------------------------------- measuring
+def probe(ex) -> ExitInfo:
+    """What the world sees through an exit, measured now: through its gateway if
+    up, else through one brought up for the probe and taken down again. Recorded
+    on the exit either way. This is what "Check the exit" does for an exit that is
+    not running, so an exit need not be up to learn where it leaves."""
+    name = paths.gateway_name(ex.id)
+    if podman.is_running(name):
+        info = measure_exit(name)
+        exits.record_exit(ex, info)
+        return info
+    gw = up(ex, measure=True)
+    try:
+        if gw.info is None:
+            info = measure_exit(gw.name)
+            exits.record_exit(ex, info)
+            return info
+        return gw.info
+    finally:
+        down(ex.id)
+
+
+def provider_alive(ex) -> bool | None:
+    """For a module exit whose gateway is up: is its provider container running?
+    None for a plain endpoint (nothing to ask). A Mysterium node that gave up
+    leaves a gateway that refuses everything — this is how a row can say so."""
+    module = ex.endpoint.module
+    if not providers.manages(module):
+        return None
+    return podman.is_running(paths.provider_container_name(module, ex.endpoint.lease))
+
+
 def exit_logs(ex, lines: int = 200) -> list[tuple[str, str]]:
     """(container, recent log) for the containers behind an exit, so someone can
     see whether the provider connected and what any error is: the module's own
@@ -582,6 +613,44 @@ def running() -> list[dict]:
             }
         )
     return out
+
+
+def heal() -> list[str]:
+    """Restart the provider behind a running gateway when it has died — a tunnel
+    node whose session ended fails closed and exits — so the exit comes back on
+    its own; the gateway, its members and its pinned address stay. If the new
+    provider comes up on another address the gateway is torn down instead
+    (reconcile's rule). Returns the gateways healed; a provider that will not
+    come back is reported in the list as "name: why" and the gateway left as is
+    (closed), for the next round."""
+    healed: list[str] = []
+    for gw in running():
+        if gw["state"] != "running" or not gw["module"] or not gw["exit_id"]:
+            continue
+        module = gw["module"]
+        if not providers.manages(module):
+            continue
+        if podman.is_running(paths.provider_container_name(module, gw["lease"])):
+            continue
+        try:
+            ex = exits.load(gw["exit_id"])
+        except exits.ExitError:
+            continue
+        pinned = podman.container_env(gw["name"], "KF_ENDPOINT_IP")
+        try:
+            prov, manifest = providers.load(module)
+            ctx = providers.context_for(module, manifest)
+            prov.down(ctx, lease=ex.endpoint.lease)
+            ep = prov.up(ctx, lease=ex.endpoint.lease, country=ex.endpoint.country)
+        except providers.ProviderError as exc:
+            healed.append(f"{gw['name']}: {exc}")
+            continue
+        if pinned and ep.host != pinned:
+            down(gw["exit_id"])  # not the address the firewall permits: fail closed
+            healed.append(f"{gw['name']}: provider came back on {ep.host}, not {pinned}; torn down")
+            continue
+        healed.append(gw["name"])
+    return healed
 
 
 def reconcile() -> list[str]:

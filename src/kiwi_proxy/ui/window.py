@@ -136,14 +136,23 @@ class Window(Adw.ApplicationWindow):
         def work():
             if not podman.available():
                 return {}
-            return {
-                g["exit_id"]: g
-                for g in gateway.running()
-                if g["exit_id"] and g["state"] == "running"
-            }
+            found = {}
+            for g in gateway.running():
+                if not g["exit_id"] or g["state"] != "running":
+                    continue
+                try:
+                    g["provider_alive"] = gateway.provider_alive(exits.load(g["exit_id"]))
+                except exits.ExitError:
+                    g["provider_alive"] = None
+                found[g["exit_id"]] = g
+            return found
 
         def done(up) -> None:
             self._polling = False
+            if any(g.get("provider_alive") is False for g in up.values()):
+                # A tunnel node that failed closed: start it again behind its
+                # gateway, off the main loop, and look again when it is done.
+                worker.run(gateway.heal, lambda healed: self._poll(), lambda _exc: None)
             if up != self._up:
                 self._up = up
                 for ex in exits.list_exits():
@@ -204,6 +213,8 @@ class Window(Adw.ApplicationWindow):
                 " ".join(x for x in (ex.last_exit.country, ex.last_exit.city) if x)
                 or ex.last_exit.ip
             )
+        if up and self._up.get(ex.id, {}).get("provider_alive") is False:
+            bits.append("provider gone — see its logs")
         if ex.owner:
             bits.append(f"from {ex.owner}")
         row.set_subtitle(" · ".join(bits))
@@ -255,14 +266,12 @@ class Window(Adw.ApplicationWindow):
         ex = self._exit(param.get_string())
         if not ex:
             return
-        if ex.id not in self._up:
-            self._toast(f"{ex.name} is down; bring it up first")
-            return
+        up_now = ex.id in self._up
+        if not up_now:
+            self._toast(f"{ex.name} is down — bringing it up for the check")
 
         def work():
-            info = gateway.measure_exit(paths.gateway_name(ex.id))
-            exits.record_exit(ex, info)
-            return info
+            return gateway.probe(ex)
 
         def done(info) -> None:
             self.refresh(rebuild=False)
@@ -407,11 +416,20 @@ class Window(Adw.ApplicationWindow):
         worker.run(work, lambda _r: (self.refresh(), self._toast("The exits made here are down")))
 
     def _reap(self) -> None:
-        def done(cleaned) -> None:
-            self.refresh()
-            self._toast(", ".join(cleaned) + " torn down" if cleaned else "Nothing to tidy up")
+        def work():
+            return gateway.heal(), gateway.reap()
 
-        worker.run(gateway.reap, done, lambda exc: self._alert("Could not tidy up", str(exc)))
+        def done(result) -> None:
+            healed, cleaned = result
+            self.refresh()
+            bits = []
+            if healed:
+                bits.append(", ".join(h.split(":")[0] for h in healed) + " healed")
+            if cleaned:
+                bits.append(", ".join(cleaned) + " torn down")
+            self._toast(" · ".join(bits) if bits else "Nothing to tidy up")
+
+        worker.run(work, done, lambda exc: self._alert("Could not tidy up", str(exc)))
 
     # ----------------------------------------------------------- environment
     def _check_environment(self, announce: bool = False) -> None:
