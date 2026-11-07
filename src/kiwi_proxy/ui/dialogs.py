@@ -10,7 +10,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 from .. import dns, endpoint, exits, gateway, paths, podman, providers, secrets  # noqa: E402
-from ..models import DnsConfig  # noqa: E402
+from ..models import DnsConfig, Lease  # noqa: E402
 from . import worker  # noqa: E402
 
 DNS_MODES = (
@@ -121,7 +121,15 @@ class ExitEditor(Adw.Dialog):
         upstream.add(self.source_row)
         self.endpoint_row = Adw.EntryRow(title="Endpoint (socks5://user:pass@host:port)")
         upstream.add(self.endpoint_row)
-        self.lease_row = _combo("Exit", [ANY_LEASE], subtitle="see the module's leases")
+        # The module's exit — a Mysterium provider, a gluetun server — chosen in a
+        # picker that lists every one with search and filters (LeasePicker).
+        self._lease: str | None = None
+        self.lease_row = Adw.ActionRow(title="Exit", subtitle=ANY_LEASE, use_markup=False)
+        self.lease_row.set_subtitle_lines(0)
+        self.lease_button = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+        self.lease_button.connect("clicked", self._on_choose_lease)
+        self.lease_row.add_suffix(self.lease_button)
+        self.lease_row.set_activatable_widget(self.lease_button)
         upstream.add(self.lease_row)
         # The module says where it can exit (Tor relays, Mysterium providers, with
         # counts); a module that cannot say gets every country there is.
@@ -244,6 +252,7 @@ class ExitEditor(Adw.Dialog):
         self.name_row.set_text(ex.name)
         if ex.endpoint.module in self._modules:
             self.source_row.set_selected(1 + self._modules.index(ex.endpoint.module))
+            self._set_lease(ex.endpoint.lease)
         else:
             self.endpoint_row.set_text(endpoint_text(ex.endpoint))
         self._want_country = (ex.endpoint.country or "").upper() or None
@@ -270,8 +279,11 @@ class ExitEditor(Adw.Dialog):
         self.endpoint_row.set_visible(module is None)
         self.lease_row.set_visible(module is not None)
         self.country_row.set_visible(module is not None)
+        # Another module's exit means nothing here; the edited exit's own is kept.
+        own = self.ex.endpoint.lease if self.ex and self.ex.endpoint.module == module else None
+        if self._lease != own:
+            self._set_lease(own)
         self._load_countries()
-        self._load_leases()
         self._refresh()
 
     @property
@@ -318,61 +330,22 @@ class ExitEditor(Adw.Dialog):
         worker.run(work, done, failed)
 
     def _on_country(self, *_args) -> None:
-        # A module that can filter by country (Mysterium's providers) is asked
-        # again for the country now chosen.
+        pass  # the picker asks the module for the country chosen when it opens
+
+    def _set_lease(self, lease_id: str | None, lease: Lease | None = None) -> None:
+        """What the picker chose (or the edited exit has): the id kept for the
+        endpoint, and the row says which it is."""
+        self._lease = lease_id or None
+        if not lease_id:
+            self.lease_row.set_subtitle(ANY_LEASE)
+        elif lease is None:
+            self.lease_row.set_subtitle(Lease(id=lease_id).short_id)
+        else:
+            self.lease_row.set_subtitle(lease_line(lease))
+
+    def _on_choose_lease(self, *_args) -> None:
         if self.module:
-            self._load_leases()
-
-    def _load_leases(self) -> None:
-        """The module's exits for the country typed, off the main thread: a
-        discovery service may be slow or away. The choice made so far is kept."""
-        module = self.module
-        chosen = self._leases[self.lease_row.get_selected()] if self._leases else None
-        current = self.ex.endpoint.lease if self.ex and self.ex.endpoint.module == module else None
-        self._leases, labels = [None], [ANY_LEASE]
-        if not module:
-            self.lease_row.set_model(Gtk.StringList.new(labels))
-            return
-        country = self.country
-        self.lease_row.set_subtitle("asking the module…")
-        generation = self._lease_generation = getattr(self, "_lease_generation", 0) + 1
-
-        def work():
-            prov, manifest = providers.load(module)
-            ctx = providers.context_for(module, manifest)
-            return manifest, providers.leases_for(prov, ctx, country)
-
-        def done(result) -> None:
-            if generation != self._lease_generation or self.module != module:
-                return  # a later choice superseded this answer
-            manifest, leases = result
-            for lease in leases:
-                self._leases.append(lease.id)
-                where = " ".join(x for x in (lease.country, lease.city) if x)
-                head = lease.label or lease.id
-                labels.append(" · ".join(x for x in (head, where, lease.detail) if x))
-            for keep in (chosen, current):
-                if keep and keep not in self._leases:
-                    self._leases.append(keep)
-                    labels.append(keep)
-            self.lease_row.set_model(Gtk.StringList.new(labels))
-            want = chosen or current
-            self.lease_row.set_selected(self._leases.index(want) if want in self._leases else 0)
-            count = len(leases)
-            where = f" in {country.upper()}" if country else ""
-            self.lease_row.set_subtitle(
-                f"{count} to choose from{where}"
-                if count
-                else manifest.description or manifest.title
-            )
-
-        def failed(exc: Exception) -> None:
-            if generation != self._lease_generation:
-                return
-            self.lease_row.set_model(Gtk.StringList.new(labels))
-            self.lease_row.set_subtitle(f"module: {exc}")
-
-        worker.run(work, done, failed)
+            LeasePicker(self.module, self.country, self._lease, self._set_lease).present(self)
 
     def _refresh(self, *_args) -> None:
         exposed = self.expose_row.get_active()
@@ -404,9 +377,8 @@ class ExitEditor(Adw.Dialog):
         password = None
         module = self.module
         if module:
-            lease = self._leases[self.lease_row.get_selected()]
             country = self.country.lower() if self.country else None
-            ep = exits.module_endpoint(module, lease=lease, country=country)
+            ep = exits.module_endpoint(module, lease=self._lease, country=country)
         else:
             text = self.endpoint_row.get_text().strip()
             if (
@@ -634,6 +606,168 @@ class ExitDetails(Adw.Dialog):
                 self._on_changed(ex)
 
         ExitEditor(self.ex, saved).present(self)
+
+
+def lease_line(lease: Lease) -> str:
+    """One line for a lease: short id, place, kind and what the module adds."""
+    place = lease.city or lease.country
+    return " · ".join(x for x in (lease.short_id, place, lease.kind, lease.detail, lease.isp) if x)
+
+
+class LeasePicker(Adw.Dialog):
+    """Choose a module's exit — a Mysterium provider, a gluetun server — the way
+    Mysterium's own app does: every one the module offers for the country, best
+    first, with a search box (any part of an id, a city, an ISP), one toggle per
+    IP type, and a field to force an id the list does not show. `on_picked(id,
+    lease)` gets the choice; None for the module's own."""
+
+    def __init__(self, module: str, country: str | None, current: str | None, on_picked) -> None:
+        self.module, self.country, self.current = module, country, current
+        self._on_picked = on_picked
+        self._leases: list[Lease] = []
+        self._kind: str | None = None
+        self.rows: list[Adw.ActionRow] = []
+        where = f" in {country.upper()}" if country else ""
+        super().__init__(
+            title=f"Exit through {module}{where}", content_width=720, content_height=780
+        )
+        header, cancel, self.use_button = _dialog_header("Use", self._on_use)
+        cancel.connect("clicked", lambda *_: self.close())
+
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=8,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=12,
+            margin_end=12,
+        )
+        self.search = Gtk.SearchEntry(placeholder_text="any part of an id, a city, an ISP…")
+        self.search.connect("search-changed", lambda *_: self.listbox.invalidate_filter())
+        box.append(self.search)
+        self.kinds = Gtk.Box(spacing=6)
+        box.append(self.kinds)
+        self.status = Gtk.Label(label="asking the module…", xalign=0, wrap=True)
+        self.status.add_css_class("dim-label")
+        box.append(self.status)
+
+        self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.listbox.add_css_class("boxed-list")
+        self.listbox.set_filter_func(self._filter)
+        self.listbox.connect("row-activated", lambda _lb, row: self._pick(row.lease_id))
+        any_row = Adw.ActionRow(use_markup=False)
+        any_row.set_title(ANY_LEASE)
+        any_row.set_subtitle("the module picks")
+        any_row.lease_id, any_row.lease = None, None
+        self.listbox.append(any_row)
+        if current is None:
+            self.listbox.select_row(any_row)
+        box.append(Gtk.ScrolledWindow(vexpand=True, child=self.listbox))
+
+        force = Adw.PreferencesGroup()
+        self.id_row = Adw.EntryRow(title="Or an id to force — one the list does not show")
+        if current and current not in [x.id for x in self._leases]:
+            self.id_row.set_text(current)
+        use_id = Gtk.Button(label="Use this id", valign=Gtk.Align.CENTER)
+        use_id.connect("clicked", lambda *_: self._pick(self.id_row.get_text().strip()))
+        self.id_row.add_suffix(use_id)
+        force.add(self.id_row)
+        box.append(force)
+
+        view = Adw.ToolbarView()
+        view.add_top_bar(header)
+        view.set_content(box)
+        self.set_child(view)
+        self._load()
+
+    # ------------------------------------------------------------------ data
+    def _load(self) -> None:
+        module, country = self.module, self.country
+
+        def work():
+            prov, manifest = providers.load(module)
+            ctx = providers.context_for(module, manifest)
+            return manifest, providers.leases_for(prov, ctx, country)
+
+        def done(result) -> None:
+            manifest, leases = result
+            self._leases = sorted(leases, key=lambda x: -(x.quality or 0))
+            for lease in self._leases:
+                row = self._row_for(lease)
+                self.rows.append(row)
+                self.listbox.append(row)
+                if lease.id == self.current:
+                    self.listbox.select_row(row)
+                    self.id_row.set_text("")
+            self._build_kinds()
+            n = len(self._leases)
+            where = f" in {country.upper()}" if country else ""
+            self.status.set_text(
+                f"{n} to choose from{where}, best first"
+                if n
+                else f"{manifest.title} offers nothing to choose{where}; "
+                "the module's choice, or an id typed below"
+            )
+
+        def failed(exc: Exception) -> None:
+            self.status.set_text(f"module: {exc} — an id can still be typed below")
+
+        worker.run(work, done, failed)
+
+    def _row_for(self, lease: Lease) -> Adw.ActionRow:
+        place = lease.city or lease.country or ""
+        # Plain text, set after use_markup is off (construction order is not
+        # guaranteed): ISPs are "1&1", "GmbH & Co. KG".
+        row = Adw.ActionRow(use_markup=False, tooltip_text=lease.id)
+        row.set_title(f"{lease.short_id}   {place}".rstrip())
+        row.set_subtitle(" · ".join(x for x in (lease.kind, lease.detail, lease.isp) if x))
+        row.set_subtitle_lines(0)
+        row.lease_id, row.lease = lease.id, lease
+        return row
+
+    def _build_kinds(self) -> None:
+        counts: dict[str, int] = {}
+        for lease in self._leases:
+            if lease.kind:
+                counts[lease.kind] = counts.get(lease.kind, 0) + 1
+        if not counts:
+            return
+        first = Gtk.ToggleButton(label=f"All ({len(self._leases)})", active=True)
+        first.connect("toggled", self._on_kind, None)
+        self.kinds.append(first)
+        for kind, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            button = Gtk.ToggleButton(label=f"{kind} ({n})", group=first)
+            button.connect("toggled", self._on_kind, kind)
+            self.kinds.append(button)
+
+    # ---------------------------------------------------------------- filter
+    def _on_kind(self, button, kind: str | None) -> None:
+        if button.get_active():
+            self._kind = kind
+            self.listbox.invalidate_filter()
+
+    def _filter(self, row) -> bool:
+        lease = getattr(row, "lease", None)
+        if lease is None:
+            return True  # the module's own choice is always there
+        return (self._kind is None or lease.kind == self._kind) and lease.matches(
+            self.search.get_text()
+        )
+
+    # ---------------------------------------------------------------- choice
+    def _on_use(self, *_args) -> None:
+        forced = self.id_row.get_text().strip()
+        row = self.listbox.get_selected_row()
+        if forced and (row is None or row.lease_id is None):
+            self._pick(forced)
+        elif row is not None:
+            self._pick(row.lease_id)
+
+    def _pick(self, lease_id: str | None) -> None:
+        lease = next((x for x in self._leases if x.id == lease_id), None)
+        self._on_picked(lease_id or None, lease)
+        if self.get_mapped():
+            self.close()
 
 
 class ModuleConfigDialog(Adw.Dialog):

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.0
+
+Choosing a module's exit the way Mysterium's own app does.
+
+- **A picker for a module's exit.** The exit editor's Exit row opens a dialog
+  that lists every exit the module offers for the country — a Mysterium provider,
+  a gluetun server — best first, with short ids ("0xcbb6…eb78"), place, IP type,
+  quality and ISP; a search box that takes any part of an id, a city or an ISP;
+  one toggle per IP type (residential, hosting, cellular, …); and a field to
+  force an id the list does not show. The exit of an existing module exit is
+  changed the same way (`kiwi-proxy set NAME --lease ID` on the CLI; `up
+  --replace` applies it to a running gateway).
+- A lease carries `kind` (the IP type), `quality` and `isp` where the module
+  knows them, and `module leases NAME --country DE --kind residential --search
+  cbb6` filters like the picker. kiwi-plugin-myst 0.4.0 fills them in and
+  offers every provider instead of the best sixty — which were all hosting.
+
 ## 0.4.0
 
 What a module needs from you, asked in one place.

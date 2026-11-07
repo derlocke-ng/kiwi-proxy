@@ -163,7 +163,7 @@ def test_the_country_row_is_a_list_the_module_fills():
     from test_module_settings import MODULE_SRC
 
     from kiwi_proxy import paths
-    from kiwi_proxy.ui.dialogs import ANY_COUNTRY, ExitEditor
+    from kiwi_proxy.ui.dialogs import ANY_COUNTRY, ExitEditor, LeasePicker
 
     mdir = paths.module_dir("fakemyst")
     mdir.mkdir(parents=True, exist_ok=True)
@@ -181,9 +181,16 @@ def test_the_country_row_is_a_list_the_module_fills():
     ]
     ed.country_row.set_selected(2)
     assert ed.country == "SE"
-    _pump(lambda: ed.lease_row.get_subtitle().startswith("1 to choose from in SE"))
+    # The exit is chosen in the picker, for the country chosen, and lands on the row.
+    picked = []
+    picker = LeasePicker("fakemyst", ed.country, ed._lease, lambda i, x: picked.append((i, x)))
+    _pump(lambda: len(picker.rows) == 1)
+    assert picker.status.get_text().startswith("1 to choose from in SE")
+    picker._pick("0xse1")
+    assert picked[0][0] == "0xse1" and picked[0][1].kind == "hosting"
+    ed._set_lease(*picked[0])
+    assert ed.lease_row.get_subtitle() == "0xse1 · Kista · hosting · Bahnhof"
     ed.name_row.set_text("north")
-    ed.lease_row.set_selected(1)
     form = ed.collect()
     assert form["endpoint"].module == "fakemyst"
     assert form["endpoint"].country == "se" and form["endpoint"].lease == "0xse1"
@@ -198,11 +205,48 @@ def test_editing_a_module_exit_keeps_its_country():
     mdir = paths.module_dir("fakemyst")
     mdir.mkdir(parents=True, exist_ok=True)
     (mdir / "provider.py").write_text(MODULE_SRC)
-    ex = exits.create("de", exits.module_endpoint("fakemyst", lease=None, country="de"))
+    ex = exits.create("de", exits.module_endpoint("fakemyst", lease="0xde1", country="de"))
     ed = ExitEditor(ex, lambda e: None)
     _pump(lambda: ed.country_row.get_model().get_n_items() == 3)
     assert ed.country == "DE"
-    assert ed.collect()["endpoint"].country == "de"
+    assert ed._lease == "0xde1" and ed.lease_row.get_subtitle() == "0xde1"
+    assert ed.collect()["endpoint"].country == "de" and ed.collect()["endpoint"].lease == "0xde1"
+
+
+def test_the_picker_filters_by_kind_and_search_and_forces_an_id():
+    from test_module_settings import MODULE_SRC
+
+    from kiwi_proxy import paths
+    from kiwi_proxy.ui.dialogs import LeasePicker
+
+    mdir = paths.module_dir("fakemyst")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(MODULE_SRC)
+    picked = []
+    picker = LeasePicker("fakemyst", None, "0xde1", lambda i, x: picked.append((i, x)))
+    _pump(lambda: len(picker.rows) == 2)
+    assert [r.lease_id for r in picker.rows] == ["0xse1", "0xde1"]  # best quality first
+    assert picker.listbox.get_selected_row().lease_id == "0xde1"  # the current one
+    assert picker.id_row.get_text() == ""
+    buttons, child = [], picker.kinds.get_first_child()
+    while child is not None:
+        buttons.append(child)
+        child = child.get_next_sibling()
+    assert {b.get_label() for b in buttons} == {"All (2)", "hosting (1)", "residential (1)"}
+    rows = {r.lease_id: r for r in picker.rows}
+    picker.search.set_text("de1")  # a piece of an id
+    assert picker._filter(rows["0xde1"]) and not picker._filter(rows["0xse1"])
+    picker.search.set_text("bahnhof")  # an ISP
+    assert picker._filter(rows["0xse1"]) and not picker._filter(rows["0xde1"])
+    picker.search.set_text("")
+    next(b for b in buttons if b.get_label().startswith("hosting")).set_active(True)
+    assert picker._kind == "hosting"
+    assert picker._filter(rows["0xse1"]) and not picker._filter(rows["0xde1"])
+    assert picker._filter(picker.listbox.get_row_at_index(0))  # the module's own choice stays
+    picker.listbox.unselect_all()
+    picker.id_row.set_text("0xforced")
+    picker._on_use()
+    assert picked == [("0xforced", None)]
 
 
 def test_details_and_modules_build(monkeypatch):

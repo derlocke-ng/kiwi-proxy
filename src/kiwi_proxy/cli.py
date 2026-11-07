@@ -412,10 +412,21 @@ def cmd_module(a: argparse.Namespace) -> int:
             where = f" in {a.country.upper()}" if a.country else ""
             _p(f"{a.name}: no selectable leases{where} (the default exit is used)")
             return 0
-        width = max(len(lease.id) for lease in leases)
-        for lease in leases:
+        shown = [
+            x
+            for x in leases
+            if (not a.kind or (x.kind or "") == a.kind) and (not a.search or x.matches(a.search))
+        ]
+        width = max((len(x.id) for x in shown), default=0)
+        for lease in shown:
             loc = " ".join(x for x in (lease.country, lease.city) if x)
-            _p(f"{lease.id:{width}} {lease.label or ''} {loc} {lease.detail or ''}".rstrip())
+            bits = [lease.kind or lease.label, loc, lease.isp, lease.detail]
+            _p(f"{lease.id:{width}}  " + "  ".join(b for b in bits if b))
+        tail = f"{len(shown)} of {len(leases)}" if len(shown) != len(leases) else f"{len(leases)}"
+        _p(
+            f"{tail} leases"
+            + (" — the picker in the app filters the same way" if len(leases) > 40 else "")
+        )
         return 0
     if cmd == "countries":
         prov, manifest = providers.load(a.name)
@@ -695,6 +706,8 @@ def build_parser() -> argparse.ArgumentParser:
     ml = msub.add_parser("leases", help="selectable exits a module offers")
     ml.add_argument("name")
     ml.add_argument("--country", help="only this country's, where the module can filter")
+    ml.add_argument("--kind", help="only this IP type: residential, hosting, cellular, …")
+    ml.add_argument("--search", help="any part of an id, a city, an ISP")
     mco = msub.add_parser("countries", help="where a module can exit, with counts where it knows")
     mco.add_argument("name")
     mst = msub.add_parser("settings", help="what a module needs from you, and what it has")

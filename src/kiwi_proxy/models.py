@@ -158,6 +158,27 @@ class Lease(Strict):
     country: str | None = None
     city: str | None = None
     detail: str | None = None
+    # For a picker to filter and sort by, where a module knows them:
+    kind: str | None = None  # the exit's IP type — residential, hosting, cellular, business
+    quality: float | None = None  # the module's own score, higher is better
+    isp: str | None = None
+
+    @property
+    def short_id(self) -> str:
+        """A hex id shortened the way Mysterium's apps show it (0xcbb6…eb78); any
+        other id as it is."""
+        if len(self.id) > 14 and self.id.lower().startswith("0x"):
+            return f"{self.id[:6]}…{self.id[-4:]}"
+        return self.id
+
+    def matches(self, text: str) -> bool:
+        """A search box's text against the id (any part, the short form's pieces
+        included), the place, the ISP, the label."""
+        needle = text.strip().lower()
+        if not needle:
+            return True
+        hay = [self.id, self.label, self.country, self.city, self.detail, self.isp, self.kind]
+        return any(needle in h.lower() for h in hay if h)
 
 
 class ProviderManifest(Strict):

@@ -151,9 +151,13 @@ unechoed password, a text field, as declared), and the CLI has
 ### Leases by country
 
 `leases(ctx, *, country=None)` may filter: Mysterium has hundreds of providers
-per country, so the editor asks again whenever the country field changes, and
-`kiwi-proxy module leases NAME --country DE` does the same. A module whose
-`leases(ctx)` takes no country is called without one (`providers.leases_for`).
+per country, so the picker asks for the country chosen, and `kiwi-proxy module
+leases NAME --country DE` does the same. A module whose `leases(ctx)` takes no
+country is called without one (`providers.leases_for`). Return every exit, not
+a best-N: the picker narrows. Fill `kind` (the IP type: residential, hosting,
+cellular, …), `quality` (higher is better; the picker sorts by it) and `isp`
+where you know them — the picker's toggles, order and search use them, and
+`Lease.short_id` / `Lease.matches(text)` are how ids are shown and searched.
 
 ### Countries
 

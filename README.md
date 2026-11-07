@@ -146,7 +146,7 @@ kiwi install kiwi-plugin-vpn
 kiwi-proxy module list            # `module leases vpn` for exits, `module doctor`
 kiwi-proxy module config mysterium keystore=~/0x….json --ask passphrase   # what a module needs from you
 kiwi-proxy module countries tor                                          # where a module can exit, with counts
-kiwi-proxy module leases mysterium --country DE                          # providers there, best first
+kiwi-proxy module leases mysterium --country DE --kind residential      # providers there, best first (--search cbb6)
 ```
 
 A module that needs something from you — Mysterium's identity keystore and its

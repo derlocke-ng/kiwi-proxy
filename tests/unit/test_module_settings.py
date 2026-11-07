@@ -36,7 +36,8 @@ class FakeMyst(ContainerProvider):
         return "identity 0xabc" if (ctx.state_dir / "id").exists() else None
 
     def leases(self, ctx, *, country=None):
-        all_ = [Lease(id="0xde1", country="DE", city="Berlin"), Lease(id="0xse1", country="SE")]
+        all_ = [Lease(id="0xde1", country="DE", city="Berlin", kind="residential", quality=2.9, isp="Telekom"),
+                Lease(id="0xse1", country="SE", city="Kista", kind="hosting", quality=3.0, isp="Bahnhof")]
         return [l for l in all_ if not country or l.country == country.upper()]
 
     def countries(self, ctx):
@@ -115,6 +116,13 @@ def test_cli_settings_config_and_leases(fakemyst, capsys):
     assert "0xse1" in out and "0xde1" not in out
     assert cli.main(["module", "leases", "fakemyst", "--country", "fr"]) == 0
     assert "no selectable leases in FR" in capsys.readouterr().out
+    assert cli.main(["module", "leases", "fakemyst", "--kind", "residential"]) == 0
+    out = capsys.readouterr().out
+    assert "0xde1  residential  DE Berlin  Telekom" in out and "0xse1" not in out
+    assert out.rstrip().endswith("1 of 2 leases")
+    assert cli.main(["module", "leases", "fakemyst", "--search", "bahn"]) == 0
+    out = capsys.readouterr().out
+    assert "0xse1" in out and "0xde1" not in out
 
 
 def test_cli_config_asks_for_a_password_unechoed(fakemyst, monkeypatch, capsys):
