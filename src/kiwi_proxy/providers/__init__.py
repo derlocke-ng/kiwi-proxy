@@ -10,10 +10,14 @@ from __future__ import annotations
 
 from .base import (
     ContainerProvider,
+    Country,
     Provider,
     ProviderContext,
     ProviderError,
+    Setting,
     TunnelProvider,
+    countries_for,
+    leases_for,
 )
 from .loader import (
     context_for,
@@ -27,10 +31,14 @@ from .loader import (
 
 __all__ = [
     "ContainerProvider",
+    "Country",
+    "countries_for",
     "Provider",
     "ProviderContext",
     "ProviderError",
+    "Setting",
     "TunnelProvider",
+    "leases_for",
     "context_for",
     "discover",
     "get_provider",

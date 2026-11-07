@@ -27,12 +27,13 @@ The lifecycle labels every container it starts with ``kiwi-proxy.role`` and
 
 from __future__ import annotations
 
+import inspect
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
-from .. import paths, podman
+from .. import countries, paths, podman
 from ..models import ContainerSpec, Endpoint, Lease, ProviderManifest, ProviderStatus
 
 
@@ -88,6 +89,57 @@ class ProviderContext:
         return (self.secret_name(key), target)
 
 
+@dataclass(frozen=True)
+class Setting:
+    """One thing a module needs from the user before it can run — a keystore
+    file, a passphrase, an account token. The app and `kiwi-proxy module config`
+    ask for them the same way; the module's ``configure`` takes the values."""
+
+    key: str
+    title: str
+    kind: Literal["file", "password", "text"] = "text"
+    help: str = ""
+    required: bool = True
+
+
+@dataclass(frozen=True)
+class Country:
+    """A country a module can exit in: the code, its name, and how many exits the
+    module has there when it knows (Tor relays, Mysterium providers)."""
+
+    code: str
+    name: str
+    count: int | None = None
+
+    @property
+    def label(self) -> str:
+        return countries.label(self.code, self.count)
+
+
+def countries_for(prov: Provider, ctx: ProviderContext) -> list[Country]:
+    """The countries a module offers, by name — the module's own list, or every
+    country there is when it has none to give (and for modules from before the
+    hook). A module's list is sorted by name; its own order is not trusted."""
+    found: list[Country] = []
+    if hasattr(prov, "countries"):
+        found = list(prov.countries(ctx))
+    if not found:
+        found = [Country(code, name) for code, name in countries.NAMES.items()]
+    return sorted(found, key=lambda c: c.name.lower())
+
+
+def leases_for(prov: Provider, ctx: ProviderContext, country: str | None = None) -> list[Lease]:
+    """A module's selectable exits, for one country when the module can filter.
+    Modules from before the ``country`` parameter are called without it."""
+    try:
+        takes_country = "country" in inspect.signature(prov.leases).parameters
+    except (TypeError, ValueError):
+        takes_country = False
+    if country and takes_country:
+        return prov.leases(ctx, country=country)
+    return prov.leases(ctx)
+
+
 @runtime_checkable
 class Provider(Protocol):
     """What kiwi-proxy calls. A plugin usually gets all of this from
@@ -103,6 +155,14 @@ class Provider(Protocol):
     def setup(self, ctx: ProviderContext) -> None: ...
 
     def leases(self, ctx: ProviderContext) -> list[Lease]: ...
+
+    def countries(self, ctx: ProviderContext) -> list[Country]: ...
+
+    def settings(self, ctx: ProviderContext) -> list[Setting]: ...
+
+    def configure(self, ctx: ProviderContext, values: dict[str, str]) -> list[str]: ...
+
+    def configured(self, ctx: ProviderContext) -> str | None: ...
 
     def up(
         self, ctx: ProviderContext, *, lease: str | None = None, country: str | None = None
@@ -138,8 +198,29 @@ class ContainerProvider:
     ) -> ContainerSpec:
         raise NotImplementedError(f"{self.name}: container_spec must be implemented")
 
-    def leases(self, ctx: ProviderContext) -> list[Lease]:  # noqa: ARG002
+    def leases(self, ctx: ProviderContext, *, country: str | None = None) -> list[Lease]:  # noqa: ARG002
+        """The exits a module can pin, for one country when it can filter."""
         return []
+
+    def countries(self, ctx: ProviderContext) -> list[Country]:  # noqa: ARG002
+        """Where the module can exit, when it knows; empty means "ask for any
+        country" and the app offers the whole table (kiwi_proxy.countries)."""
+        return []
+
+    # ------------------------------------------------------------------ settings
+    def settings(self, ctx: ProviderContext) -> list[Setting]:  # noqa: ARG002
+        """What the user has to provide before the module can run; none by default."""
+        return []
+
+    def configure(self, ctx: ProviderContext, values: dict[str, str]) -> list[str]:  # noqa: ARG002
+        """Take the values for ``settings`` (file paths, passwords, text) and keep
+        them in the module's state (and podman secrets); returns lines worth
+        showing. A module without settings refuses."""
+        raise ProviderError(f"{self.name}: nothing to configure")
+
+    def configured(self, ctx: ProviderContext) -> str | None:  # noqa: ARG002
+        """One line on what is configured — "identity 0x12…ab" — or None."""
+        return None
 
     # --------------------------------------------------------------------- setup
     def setup(self, ctx: ProviderContext) -> None:
@@ -187,7 +268,13 @@ class ContainerProvider:
         _label(spec, self.name, lease, role="provider")
         if not podman.is_running(spec.name):
             podman.start(spec)
-        ip = self._await_ready(ctx, spec.name)
+        try:
+            ip = self._await_ready(ctx, spec.name)
+        except ProviderError:
+            # Not left running (and, with on-failure, restarting) with no exit
+            # able to use it; the error says what its log said.
+            self.down(ctx, lease=lease)
+            raise
         return Endpoint(
             host=ip,
             port=self.manifest.socks_port,
@@ -215,6 +302,7 @@ class ContainerProvider:
         raise ProviderError(
             f"{self.name}: provider did not become ready within {self.ready_timeout:.0f}s"
             + (f" (address {last})" if last else "")
+            + _log_tail(container)
         )
 
     def ready(self, ctx: ProviderContext, container: str) -> bool:  # noqa: ARG002
@@ -308,7 +396,13 @@ class TunnelProvider(ContainerProvider):
             # gateway.up removes its members before replacing a gateway.
             podman.rm(ctx.adapter_name(lease))
             podman.start(tunnel)
-        ip = self._await_tunnel(ctx, tunnel.name)
+        try:
+            ip = self._await_tunnel(ctx, tunnel.name)
+        except ProviderError:
+            # A tunnel that never came up is not left running (and restarting);
+            # the error carries what its log said.
+            self.down(ctx, lease=lease)
+            raise
         adapter = self.adapter_spec(ctx, tunnel.name, lease=lease)
         _label(adapter, self.name, lease, role="adapter")
         if not podman.is_running(adapter.name):
@@ -343,6 +437,7 @@ class TunnelProvider(ContainerProvider):
         raise ProviderError(
             f"{self.name}: tunnel did not come up within {self.ready_timeout:.0f}s"
             + (f" (address {last})" if last else "")
+            + _log_tail(container)
         )
 
     def down(self, ctx: ProviderContext, *, lease: str | None = None) -> None:
@@ -370,6 +465,16 @@ class TunnelProvider(ContainerProvider):
         status = super().status(ctx)
         status.image_present = status.image_present and podman.image_exists(ctx.adapter_image)
         return status
+
+
+def _log_tail(container: str, lines: int = 8) -> str:
+    """The last lines a container logged, for an error about it; nothing when it
+    logged nothing (or is already gone)."""
+    try:
+        tail = [ln for ln in podman.logs(container, tail=lines).splitlines() if ln.strip()]
+    except Exception:  # noqa: BLE001 - the error being built matters more
+        return ""
+    return ("\n  its log ends:\n  " + "\n  ".join(tail[-lines:])) if tail else ""
 
 
 def _label(spec: ContainerSpec, module: str, lease: str | None, *, role: str) -> None:

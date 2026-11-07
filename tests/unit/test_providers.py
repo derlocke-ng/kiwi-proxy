@@ -164,11 +164,29 @@ def test_up_fails_when_container_exits(fake_module, monkeypatch):
 
 def test_up_times_out_without_an_address(fake_module, monkeypatch):
     _stub_podman(monkeypatch, running=True, ip=None)
+    removed: list[str] = []
+    monkeypatch.setattr(podman, "rm", lambda name, **k: removed.append(name))
+    monkeypatch.setattr(podman, "logs", lambda name, tail=50: "\nbooting\n\nstill no address\n")
     provider, manifest = providers.load("faketor")
     provider.ready_timeout = 0.3
     ctx = providers.context_for("faketor", manifest)
-    with pytest.raises(providers.ProviderError, match="did not become ready"):
+    with pytest.raises(providers.ProviderError, match="did not become ready") as info:
         provider.up(ctx, lease="de")
+    # The container that never got ready is not left running, and its last words
+    # travel with the error so the user sees why.
+    assert removed == [paths.provider_container_name("faketor", "de")]
+    assert "booting" in str(info.value) and "still no address" in str(info.value)
+
+
+def test_up_tears_the_container_down_when_it_exits(fake_module, monkeypatch):
+    _stub_podman(monkeypatch, running=False)
+    removed: list[str] = []
+    monkeypatch.setattr(podman, "rm", lambda name, **k: removed.append(name))
+    provider, manifest = providers.load("faketor")
+    ctx = providers.context_for("faketor", manifest)
+    with pytest.raises(providers.ProviderError, match="exited during start"):
+        provider.up(ctx, lease="de")
+    assert removed == [paths.provider_container_name("faketor", "de")]
 
 
 def test_up_rejects_a_spec_on_the_wrong_network(fake_module, monkeypatch):

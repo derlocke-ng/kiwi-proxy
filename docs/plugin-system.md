@@ -123,6 +123,50 @@ manifest). Override `ready()` when the upstream has a slow handshake — a VPN t
 or a Tor bootstrap — so kiwi-proxy waits for the SOCKS5 port, not just a running
 container.
 
+### Settings
+
+A module that needs something from the user before it can run — Mysterium's
+identity keystore and its passphrase, an account token — declares it:
+
+```python
+from kiwi_proxy.providers.base import Setting
+
+def settings(self, ctx):
+    return [Setting("keystore", "Identity keystore", kind="file", help="…"),
+            Setting("passphrase", "Keystore passphrase", kind="password", required=False)]
+
+def configure(self, ctx, values):   # values: key -> file path / password / text
+    ...                              # keep it in ctx.state_dir, ctx.set_secret(…)
+    return ["identity 0x… imported"]  # lines worth showing
+
+def configured(self, ctx):          # one line on the current state, or None
+    return "identity 0x12…ab"
+```
+
+The app shows a **Configure…** button for such a module (a file chooser, an
+unechoed password, a text field, as declared), and the CLI has
+`kiwi-proxy module settings NAME` and `kiwi-proxy module config NAME KEY=VALUE …
+--ask KEY`. `module status` and `module list` say when a module is not configured.
+
+### Leases by country
+
+`leases(ctx, *, country=None)` may filter: Mysterium has hundreds of providers
+per country, so the editor asks again whenever the country field changes, and
+`kiwi-proxy module leases NAME --country DE` does the same. A module whose
+`leases(ctx)` takes no country is called without one (`providers.leases_for`).
+
+### Countries
+
+`countries(ctx)` says where a module can exit: `Country(code, name, count)`, the
+count where the module knows it (Tor's running exit relays per country from the
+Tor directory, Mysterium's providers per country from discovery). The exit editor
+offers that as a searchable list with names and counts, and `kiwi-proxy module
+countries NAME` prints it. A module that cannot say — or predates the hook —
+returns nothing, and every country there is gets offered instead
+(`kiwi_proxy.countries`, ISO 3166-1); `providers.countries_for` does both. A
+country alone is a complete choice: Tor's `leases()` is empty, the country is the
+whole selection, and a module that can filter gets it in `leases(ctx, country=…)`.
+
 ### Credentials
 
 Three auth modes, handled by kiwi-proxy so the module never touches the keyring:
@@ -176,6 +220,11 @@ neighbour is still dropped. On top of that:
   derived from its module+lease, so it always returns to the same address and a
   freed address cannot be handed to a different container. The provider also runs
   with `--restart on-failure`, so an out-of-band crash recovers in place on that IP.
+- **A tunnel container runs unlabelled.** SELinux's `container_t` may not open
+  `/dev/net/tun` (Fedora denies it to the container type whatever the caps), so a
+  spec that lists that device is rendered with `--security-opt label=disable`,
+  unless it sets a label itself; dropped caps, `no-new-privileges` and the user
+  namespace stay. Containers without the device keep the default labelling.
 - **A gateway whose provider address drifts is failed closed.** As a backstop,
   `gateway.reconcile()` (run from `reap()`) compares each running gateway's
   pinned `KF_ENDPOINT_IP` against its provider's current address and tears the

@@ -54,6 +54,18 @@ def test_parse_geo_reads_ifconfig_and_ip_api_shapes():
     assert (info.ip, info.country) == ("198.51.100.4", "SE")
 
 
+def test_parse_geo_reads_the_ipinfo_shape():
+    info = parse_geo(
+        '{"ip": "148.251.177.170", "country": "DE", "city": "Falkenstein", "org": "AS24940 Hetzner"}'
+    )
+    assert (info.ip, info.country, info.city, info.asn) == (
+        "148.251.177.170",
+        "DE",
+        "Falkenstein",
+        "AS24940 Hetzner",
+    )
+
+
 def test_parse_geo_rejects_garbage():
     with pytest.raises(EndpointError):
         parse_geo("<html>nope</html>")

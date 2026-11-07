@@ -7,7 +7,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 from .. import dns, endpoint, exits, gateway, paths, podman, providers, secrets  # noqa: E402
 from ..models import DnsConfig  # noqa: E402
@@ -27,6 +27,7 @@ BLOCKLIST_LABELS = {
     "oisd-nsfw": ("Adult content", "oisd nsfw"),
 }
 SOCKS5 = "SOCKS5 endpoint"
+ANY_COUNTRY = "Any country"
 ANY_LEASE = "(the provider's choice)"
 FIRST_HOST_PORT = 1081
 
@@ -122,7 +123,12 @@ class ExitEditor(Adw.Dialog):
         upstream.add(self.endpoint_row)
         self.lease_row = _combo("Exit", [ANY_LEASE], subtitle="see the module's leases")
         upstream.add(self.lease_row)
-        self.country_row = Adw.EntryRow(title="Country (two letters, optional)")
+        # The module says where it can exit (Tor relays, Mysterium providers, with
+        # counts); a module that cannot say gets every country there is.
+        self.country_row = Adw.ComboRow(title="Country", subtitle="any", enable_search=True)
+        self._countries: list[str | None] = [None]
+        self.country_row.set_model(Gtk.StringList.new([ANY_COUNTRY]))
+        self.country_row.connect("notify::selected", self._on_country)
         upstream.add(self.country_row)
         self.test_row = Adw.ActionRow(
             title="Test the upstream", subtitle="ask what the world sees through it"
@@ -240,7 +246,8 @@ class ExitEditor(Adw.Dialog):
             self.source_row.set_selected(1 + self._modules.index(ex.endpoint.module))
         else:
             self.endpoint_row.set_text(endpoint_text(ex.endpoint))
-        self.country_row.set_text(ex.endpoint.country or "")
+        self._want_country = (ex.endpoint.country or "").upper() or None
+        self._select_country(self._want_country)
         if ex.expose:
             self.expose_row.set_active(True)
             self.bind_row.set_text(ex.expose.bind)
@@ -263,25 +270,109 @@ class ExitEditor(Adw.Dialog):
         self.endpoint_row.set_visible(module is None)
         self.lease_row.set_visible(module is not None)
         self.country_row.set_visible(module is not None)
-        self._leases = [None]
-        labels = [ANY_LEASE]
-        if module:
-            try:
-                prov, manifest = providers.load(module)
-                for lease in prov.leases(providers.context_for(module, manifest)):
-                    self._leases.append(lease.id)
-                    where = " ".join(x for x in (lease.country, lease.city) if x)
-                    labels.append(" · ".join(x for x in (lease.id, lease.label, where) if x))
-                self.lease_row.set_subtitle(manifest.description or manifest.title)
-            except providers.ProviderError as exc:
-                self.lease_row.set_subtitle(f"module is broken: {exc}")
-        current = self.ex.endpoint.lease if self.ex and self.ex.endpoint.module == module else None
-        if current and current not in self._leases:
-            self._leases.append(current)
-            labels.append(current)
-        self.lease_row.set_model(Gtk.StringList.new(labels))
-        self.lease_row.set_selected(self._leases.index(current) if current in self._leases else 0)
+        self._load_countries()
+        self._load_leases()
         self._refresh()
+
+    @property
+    def country(self) -> str | None:
+        """The chosen country code, or None for any."""
+        index = self.country_row.get_selected()
+        return self._countries[index] if 0 <= index < len(self._countries) else None
+
+    def _select_country(self, code: str | None) -> None:
+        self.country_row.set_selected(self._countries.index(code) if code in self._countries else 0)
+
+    def _load_countries(self) -> None:
+        """The module's countries, off the main thread (Tor asks its directory,
+        Mysterium its discovery service); the choice made so far is kept."""
+        module = self.module
+        if not module:
+            return
+        generation = self._country_generation = getattr(self, "_country_generation", 0) + 1
+
+        def work():
+            prov, manifest = providers.load(module)
+            return providers.countries_for(prov, ctx := providers.context_for(module, manifest)), (
+                bool(getattr(prov, "countries", lambda _c: [])(ctx))
+            )
+
+        def done(result) -> None:
+            if generation != self._country_generation or self.module != module:
+                return
+            found, own = result
+            # Keep the country chosen so far, or the edited exit's — read now, not
+            # when the module was asked: _load sets the exit's after the source.
+            want = self.country or getattr(self, "_want_country", None)
+            self._countries = [None, *(c.code.upper() for c in found)]
+            self.country_row.set_model(Gtk.StringList.new([ANY_COUNTRY, *(c.label for c in found)]))
+            self._select_country(want.upper() if want else None)
+            self.country_row.set_subtitle(
+                f"{len(found)} the module has exits in" if own else "any — the module does not say"
+            )
+
+        def failed(exc: Exception) -> None:
+            if generation == self._country_generation:
+                self.country_row.set_subtitle(f"module: {exc}")
+
+        worker.run(work, done, failed)
+
+    def _on_country(self, *_args) -> None:
+        # A module that can filter by country (Mysterium's providers) is asked
+        # again for the country now chosen.
+        if self.module:
+            self._load_leases()
+
+    def _load_leases(self) -> None:
+        """The module's exits for the country typed, off the main thread: a
+        discovery service may be slow or away. The choice made so far is kept."""
+        module = self.module
+        chosen = self._leases[self.lease_row.get_selected()] if self._leases else None
+        current = self.ex.endpoint.lease if self.ex and self.ex.endpoint.module == module else None
+        self._leases, labels = [None], [ANY_LEASE]
+        if not module:
+            self.lease_row.set_model(Gtk.StringList.new(labels))
+            return
+        country = self.country
+        self.lease_row.set_subtitle("asking the module…")
+        generation = self._lease_generation = getattr(self, "_lease_generation", 0) + 1
+
+        def work():
+            prov, manifest = providers.load(module)
+            ctx = providers.context_for(module, manifest)
+            return manifest, providers.leases_for(prov, ctx, country)
+
+        def done(result) -> None:
+            if generation != self._lease_generation or self.module != module:
+                return  # a later choice superseded this answer
+            manifest, leases = result
+            for lease in leases:
+                self._leases.append(lease.id)
+                where = " ".join(x for x in (lease.country, lease.city) if x)
+                head = lease.label or lease.id
+                labels.append(" · ".join(x for x in (head, where, lease.detail) if x))
+            for keep in (chosen, current):
+                if keep and keep not in self._leases:
+                    self._leases.append(keep)
+                    labels.append(keep)
+            self.lease_row.set_model(Gtk.StringList.new(labels))
+            want = chosen or current
+            self.lease_row.set_selected(self._leases.index(want) if want in self._leases else 0)
+            count = len(leases)
+            where = f" in {country.upper()}" if country else ""
+            self.lease_row.set_subtitle(
+                f"{count} to choose from{where}"
+                if count
+                else manifest.description or manifest.title
+            )
+
+        def failed(exc: Exception) -> None:
+            if generation != self._lease_generation:
+                return
+            self.lease_row.set_model(Gtk.StringList.new(labels))
+            self.lease_row.set_subtitle(f"module: {exc}")
+
+        worker.run(work, done, failed)
 
     def _refresh(self, *_args) -> None:
         exposed = self.expose_row.get_active()
@@ -314,7 +405,7 @@ class ExitEditor(Adw.Dialog):
         module = self.module
         if module:
             lease = self._leases[self.lease_row.get_selected()]
-            country = self.country_row.get_text().strip().lower() or None
+            country = self.country.lower() if self.country else None
             ep = exits.module_endpoint(module, lease=lease, country=country)
         else:
             text = self.endpoint_row.get_text().strip()
@@ -545,6 +636,113 @@ class ExitDetails(Adw.Dialog):
         ExitEditor(self.ex, saved).present(self)
 
 
+class ModuleConfigDialog(Adw.Dialog):
+    """What a module needs from the user — the settings it declares — as a form: a
+    file is chosen, a password is typed unechoed, text is typed. Apply hands the
+    values to the module's ``configure`` and shows what it says."""
+
+    def __init__(self, name: str, on_done=None) -> None:
+        self.name = name
+        self.prov, self.manifest = providers.load(name)
+        self.ctx = providers.context_for(name, self.manifest)
+        super().__init__(
+            title=f"Configure {self.manifest.title}", content_width=560, content_height=460
+        )
+        self._on_done = on_done
+        self._files: dict[str, str] = {}
+        self.rows: dict[str, Gtk.Widget] = {}
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup(description=self.manifest.notes or self.manifest.description)
+        for st in self.prov.settings(self.ctx):
+            title = st.title + ("" if st.required else " (optional)")
+            if st.kind == "file":
+                row = Adw.ActionRow(title=title, subtitle=st.help or "no file chosen")
+                row.set_subtitle_lines(0)
+                choose = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+                choose.connect("clicked", self._on_choose, st.key, row)
+                row.add_suffix(choose)
+            elif st.kind == "password":
+                row = Adw.PasswordEntryRow(title=title)
+            else:
+                row = Adw.EntryRow(title=title)
+            group.add(row)
+            if st.kind != "file" and st.help:
+                note = Adw.ActionRow(subtitle=st.help, use_markup=False)
+                note.set_subtitle_lines(0)
+                group.add(note)
+            self.rows[st.key] = row
+        page.add(group)
+
+        self.state_row = _row("Now", self.prov.configured(self.ctx) or "not configured")
+        state = Adw.PreferencesGroup()
+        state.add(self.state_row)
+        page.add(state)
+        status = Adw.PreferencesGroup()
+        self.status_label = Gtk.Label(wrap=True, xalign=0, visible=False)
+        self.status_label.add_css_class("dim-label")
+        status.add(self.status_label)
+        page.add(status)
+
+        header, cancel, self.apply_button = _dialog_header("Apply", self._on_apply)
+        cancel.connect("clicked", lambda *_: self.close())
+        view = Adw.ToolbarView()
+        view.add_top_bar(header)
+        view.set_content(page)
+        self.set_child(view)
+
+    def _on_choose(self, _button, key: str, row: Adw.ActionRow) -> None:
+        dialog = Gtk.FileDialog(title=row.get_title())
+
+        def picked(d, result) -> None:
+            try:
+                file = d.open_finish(result)
+            except GLib.Error:
+                return  # cancelled
+            if file is not None and file.get_path():
+                self._files[key] = file.get_path()
+                row.set_subtitle(file.get_path())
+
+        dialog.open(self.get_root(), None, picked)
+
+    def collect(self) -> dict[str, str]:
+        """The values as typed and chosen, or ValueError naming what is missing.
+        Side-effect free, so it can be tested without a display server."""
+        values: dict[str, str] = {}
+        for st in self.prov.settings(self.ctx):
+            if st.kind == "file":
+                value = self._files.get(st.key, "")
+            else:
+                value = self.rows[st.key].get_text()
+            if st.required and not value:
+                raise ValueError(f"{st.title} is needed")
+            values[st.key] = value
+        return values
+
+    def _say(self, text: str) -> None:
+        self.status_label.set_text(text)
+        self.status_label.set_visible(bool(text))
+
+    def _on_apply(self, *_args) -> None:
+        try:
+            values = self.collect()
+        except ValueError as exc:
+            self._say(str(exc))
+            return
+        self.apply_button.set_sensitive(False)
+        self._say("Applying…")
+
+        def done(lines: list[str]) -> None:
+            self.close()
+            if self._on_done:
+                self._on_done(lines)
+
+        def failed(exc: Exception) -> None:
+            self.apply_button.set_sensitive(True)
+            self._say(str(exc))
+
+        worker.run(lambda: self.prov.configure(self.ctx, values), done, failed)
+
+
 class ModulesDialog(Adw.Dialog):
     """The installed provider modules: are their images there, are they running."""
 
@@ -575,6 +773,16 @@ class ModulesDialog(Adw.Dialog):
         except providers.ProviderError as exc:
             return _row(name, f"broken: {exc}")
         row = Adw.ActionRow(title=title, subtitle="checking…", use_markup=False)
+        row.set_subtitle_lines(0)
+        try:
+            prov, manifest = providers.load(name)
+            has_settings = bool(prov.settings(providers.context_for(name, manifest)))
+        except providers.ProviderError:
+            has_settings = False
+        if has_settings:
+            configure = Gtk.Button(label="Configure…", valign=Gtk.Align.CENTER)
+            configure.connect("clicked", self._on_configure, name, row)
+            row.add_suffix(configure)
         button = Gtk.Button(label="Set up", valign=Gtk.Align.CENTER)
         button.connect("clicked", self._on_setup, name, row)
         row.add_suffix(button)
@@ -584,13 +792,25 @@ class ModulesDialog(Adw.Dialog):
     def _status(self, name: str, row: Adw.ActionRow) -> None:
         def work():
             prov, manifest = providers.load(name)
+            ctx = providers.context_for(name, manifest)
             if not podman.available():
                 return "podman is not installed"
-            status = prov.status(providers.context_for(name, manifest))
+            status = prov.status(ctx)
             image = "image ready" if status.image_present else "image missing — set it up"
-            return f"{name} · {image} · {'running' if status.running else 'idle'}"
+            bits = [name, image, "running" if status.running else "idle"]
+            if prov.settings(ctx):
+                bits.append(prov.configured(ctx) or "not configured")
+            return " · ".join(bits)
 
         worker.run(work, row.set_subtitle, lambda exc: row.set_subtitle(f"{name} · {exc}"))
+
+    def _on_configure(self, _button, name: str, row: Adw.ActionRow) -> None:
+        def done(lines: list[str]) -> None:
+            self._status(name, row)
+            if self._toast:
+                self._toast(lines[0] if lines else f"{name} configured")
+
+        ModuleConfigDialog(name, done).present(self)
 
     def _on_setup(self, button: Gtk.Button, name: str, row: Adw.ActionRow) -> None:
         from .. import setup

@@ -71,10 +71,16 @@ def main(argv: list[str]) -> int:
     head, _, body = raw.partition(b"\r\n\r\n")
     if b"transfer-encoding: chunked" in head.lower():
         body = dechunk(body)
+    status = head.split(b"\r\n", 1)[0]
     if out is None:
+        if b" 200 " not in status + b" ":  # a refusal is said, not printed as the answer
+            print(
+                f"kf-exitinfo: {url.geturl()}: {status.decode('latin-1')} ({len(body)} bytes)",
+                file=sys.stderr,
+            )
+            return 1
         sys.stdout.write(body.decode("utf-8", "replace"))
         return 0
-    status = head.split(b"\r\n", 1)[0]
     if b" 200 " not in status + b" " or len(body) < 1024:
         print(
             f"kf-exitinfo: {url.geturl()}: {status.decode('latin-1')} ({len(body)} bytes)",

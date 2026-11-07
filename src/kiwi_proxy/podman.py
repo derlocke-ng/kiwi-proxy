@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -76,12 +77,30 @@ def rm(name: str, *, force: bool = True, wait: float = 5.0) -> None:
         time.sleep(0.1)
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
 def logs(name: str, tail: int = 50) -> str:
-    return _run(["logs", "--tail", str(tail), name], check=False).stdout
+    """The last `tail` lines a container wrote — stdout and stderr in one stream, as
+    `podman logs` shows them, without terminal colours (a daemon's log is coloured;
+    the error dialog quoting it is not a terminal). Nothing for a container that
+    is gone."""
+    proc = subprocess.run(  # noqa: S603
+        ["podman", "logs", "--tail", str(tail), name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return _ANSI.sub("", proc.stdout) if proc.returncode == 0 else ""
 
 
 def exec_(name: str, args: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
     return _run(["exec", name, *args], check=False, timeout=timeout)
+
+
+TUN_DEVICE = "/dev/net/tun"
 
 
 def spec_args(spec: ContainerSpec, *, detach: bool = True) -> list[str]:
@@ -103,7 +122,15 @@ def spec_args(spec: ContainerSpec, *, detach: bool = True) -> list[str]:
         args += ["--cap-drop", cap]
     for cap in spec.cap_add:
         args += ["--cap-add", cap]
-    for opt in spec.security_opt:
+    security_opt = list(spec.security_opt)
+    if TUN_DEVICE in spec.devices and not any(o.startswith("label=") for o in security_opt):
+        # SELinux's container type may not open /dev/net/tun (Fedora: "avc: denied
+        # { read write } … scontext=container_t tcontext=tun_tap_device_t"), with
+        # NET_ADMIN or without. A container given the device is given it to use,
+        # so it runs unlabelled — as the user's own stacks do; the caps it dropped,
+        # no-new-privileges and the user namespace stay.
+        security_opt.append("label=disable")
+    for opt in security_opt:
         args += ["--security-opt", opt]
     for key, val in sorted(spec.env.items()):
         args += ["--env", f"{key}={val}"]
@@ -156,6 +183,10 @@ def secret_set(name: str, value: str) -> None:
 
 def secret_rm(name: str) -> None:
     _run(["secret", "rm", name], check=False)
+
+
+def secret_exists(name: str) -> bool:
+    return _run(["secret", "inspect", name], check=False).returncode == 0
 
 
 def orphans() -> list[str]:

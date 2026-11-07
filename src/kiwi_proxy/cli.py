@@ -366,8 +366,12 @@ def _module_status_line(name: str) -> tuple[str, bool]:
     )
     run = "running" if status.running else "idle"
     req = f" · missing: {', '.join(missing)}" if missing else ""
+    cfg = ""
+    if prov.settings(ctx):
+        state = prov.configured(ctx)
+        cfg = f" · {state}" if state else f" · not configured (kiwi-proxy module config {name})"
     ok = status.image_present and not missing
-    return f"{name:12} {img} · {run}{req}", ok
+    return f"{name:12} {img} · {run}{req}{cfg}", ok
 
 
 def cmd_module(a: argparse.Namespace) -> int:
@@ -403,13 +407,70 @@ def cmd_module(a: argparse.Namespace) -> int:
     if cmd == "leases":
         prov, manifest = providers.load(a.name)
         ctx = providers.context_for(a.name, manifest)
-        leases = prov.leases(ctx)
+        leases = providers.leases_for(prov, ctx, a.country)
         if not leases:
-            _p(f"{a.name}: no selectable leases (the default exit is used)")
+            where = f" in {a.country.upper()}" if a.country else ""
+            _p(f"{a.name}: no selectable leases{where} (the default exit is used)")
             return 0
+        width = max(len(lease.id) for lease in leases)
         for lease in leases:
             loc = " ".join(x for x in (lease.country, lease.city) if x)
-            _p(f"{lease.id:20} {lease.label or ''} {loc} {lease.detail or ''}".rstrip())
+            _p(f"{lease.id:{width}} {lease.label or ''} {loc} {lease.detail or ''}".rstrip())
+        return 0
+    if cmd == "countries":
+        prov, manifest = providers.load(a.name)
+        ctx = providers.context_for(a.name, manifest)
+        found = providers.countries_for(prov, ctx)
+        own = bool(getattr(prov, "countries", lambda _c: [])(ctx))
+        for c in found:
+            _p(f"{c.code}  {c.name}" + (f"  {c.count}" if c.count is not None else ""))
+        _p(
+            f"{len(found)} countries"
+            + ("" if own else f" — {a.name} does not say where it can exit; any of these")
+        )
+        return 0
+    if cmd == "settings":
+        prov, manifest = providers.load(a.name)
+        ctx = providers.context_for(a.name, manifest)
+        settings = prov.settings(ctx)
+        if not settings:
+            _p(f"{a.name}: nothing to configure")
+            return 0
+        for st in settings:
+            need = "" if st.required else " (optional)"
+            _p(f"{st.key:14} {st.title}{need} [{st.kind}]")
+            if st.help:
+                _p(f"{'':14} {st.help}")
+        state = prov.configured(ctx)
+        _p(f"state: {state or 'not configured'}")
+        _p(
+            f"set them: kiwi-proxy module config {a.name} KEY=VALUE … "
+            "(--ask KEY prompts for a password)"
+        )
+        return 0
+    if cmd == "config":
+        prov, manifest = providers.load(a.name)
+        ctx = providers.context_for(a.name, manifest)
+        known = {st.key: st for st in prov.settings(ctx)}
+        if not known:
+            return _fail(f"{a.name}: nothing to configure")
+        values: dict[str, str] = {}
+        for item in a.values:
+            key, sep, value = item.partition("=")
+            if not sep or key not in known:
+                return _fail(f"{item!r}: expected KEY=VALUE with KEY one of {', '.join(known)}")
+            values[key] = value
+        for key in a.ask or []:
+            if key not in known:
+                return _fail(f"--ask {key}: not a setting of {a.name} ({', '.join(known)})")
+            import getpass
+
+            values[key] = getpass.getpass(f"{known[key].title}: ")
+        missing = [k for k, st in known.items() if st.required and k not in values]
+        if missing:
+            return _fail(f"missing: {', '.join(missing)} (kiwi-proxy module settings {a.name})")
+        for line in prov.configure(ctx, values):
+            _p(f"  {line}")
         return 0
     if cmd == "up":
         prov, manifest = providers.load(a.name)
@@ -494,7 +555,9 @@ def cmd_doctor(a: argparse.Namespace) -> int:
 def _endpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--module", help="a provider module that produces the endpoint (tor, vpn, …)")
     p.add_argument("--lease", help="which of the module's exits (see `module leases`)")
-    p.add_argument("--country", help="two-letter code, when the module can target one")
+    p.add_argument(
+        "--country", help="two-letter code (kiwi-proxy module countries NAME lists them)"
+    )
 
 
 def _expose_args(p: argparse.ArgumentParser) -> None:
@@ -631,6 +694,15 @@ def build_parser() -> argparse.ArgumentParser:
     ms.add_argument("name")
     ml = msub.add_parser("leases", help="selectable exits a module offers")
     ml.add_argument("name")
+    ml.add_argument("--country", help="only this country's, where the module can filter")
+    mco = msub.add_parser("countries", help="where a module can exit, with counts where it knows")
+    mco.add_argument("name")
+    mst = msub.add_parser("settings", help="what a module needs from you, and what it has")
+    mst.add_argument("name")
+    mcf = msub.add_parser("config", help="give a module its settings (a keystore, a passphrase)")
+    mcf.add_argument("name")
+    mcf.add_argument("values", nargs="*", metavar="KEY=VALUE")
+    mcf.add_argument("--ask", action="append", metavar="KEY", help="prompt for KEY, unechoed")
     mu = msub.add_parser("up", help="bring a provider up and print its address")
     mu.add_argument("name")
     mu.add_argument("--lease")

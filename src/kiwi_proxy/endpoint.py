@@ -16,6 +16,9 @@ from urllib.parse import urlparse
 from .models import Endpoint, ExitInfo
 
 DEFAULT_GEO_URL = "https://ifconfig.co/json"
+# Asked in turn when measuring an exit: an ip-echo service may refuse a hosting
+# exit (ifconfig.co answers some with an empty 429) that the next one serves.
+GEO_URLS = (DEFAULT_GEO_URL, "https://ipinfo.io/json", "https://am.i.mullvad.net/json")
 VENDOR_RE = re.compile(r"^(?P<host>[^:]+):(?P<port>\d+)(?::(?P<user>[^:]+):(?P<pw>.+))?$")
 
 
@@ -169,7 +172,8 @@ def preflight(
 
 
 def parse_geo(text: str) -> ExitInfo:
-    """What an ip-echo service said, as an ExitInfo. ifconfig.co and ip-api shapes."""
+    """What an ip-echo service said, as an ExitInfo: the ifconfig.co, ipinfo.io,
+    ip-api and am.i.mullvad.net shapes."""
     text = text.strip()
     if text and text[0] not in "{[":  # chunked encoding
         text = "".join(
@@ -184,6 +188,6 @@ def parse_geo(text: str) -> ExitInfo:
         country=data.get("country_iso") or data.get("countryCode") or data.get("country"),
         city=data.get("city"),
         timezone=data.get("time_zone") or data.get("timezone"),
-        asn=str(data.get("asn") or data.get("as") or "") or None,
+        asn=str(data.get("asn") or data.get("as") or data.get("org") or "") or None,
         seen=dt.datetime.now(dt.UTC),
     )

@@ -223,6 +223,45 @@ def test_expose_user_without_a_password_is_refused(new_exit, fake):
 
 
 # ------------------------------------------------------------------ lifecycle
+def test_measuring_asks_the_next_service_when_one_refuses(new_exit, fake, monkeypatch):
+    asked = []
+
+    def exec_(name, args, timeout=60):
+        asked.append(args[1])
+        if len(asked) == 1:  # ifconfig.co answers a hosting exit with an empty 429
+            return subprocess.CompletedProcess(
+                args,
+                1,
+                stdout="",
+                stderr="kf-exitinfo: https://ifconfig.co/json: HTTP/1.1 429 (0 bytes)",
+            )
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout='{"ip": "148.251.177.170", "country": "DE", "org": "AS24940"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(podman, "exec_", exec_)
+    info = gateway.measure_exit("kf-gw-x")
+    assert (info.ip, info.country) == ("148.251.177.170", "DE")
+    assert asked == ["https://ifconfig.co/json", "https://ipinfo.io/json"]
+
+
+def test_measuring_reports_every_refusal(fake, monkeypatch):
+    monkeypatch.setattr(
+        podman,
+        "exec_",
+        lambda n, args, timeout=60: subprocess.CompletedProcess(args, 0, stdout="", stderr=""),
+    )
+    with pytest.raises(gateway.GatewayError) as info:
+        gateway.measure_exit("kf-gw-x")
+    assert str(info.value).count("unparseable") == 3 and "am.i.mullvad.net" in str(info.value)
+    with pytest.raises(gateway.GatewayError) as info:
+        gateway.measure_exit("kf-gw-x", "http://only.example/json")
+    assert "only.example" in str(info.value) and str(info.value).count("unparseable") == 1
+
+
 def test_up_starts_a_gateway_and_measures_through_it(new_exit, fake):
     ex = remote(new_exit)
     gw = gateway.up(ex)
@@ -336,6 +375,30 @@ def test_the_provider_stays_while_another_gateway_uses_it(new_exit, fake):
     assert prov in fake.containers  # b still exits through it
     gateway.down(b.id)
     assert prov not in fake.containers
+
+
+def test_down_releases_the_provider_when_the_gateway_never_came_up(new_exit, fake):
+    # The provider started, the gateway did not (podman refused, the user hit
+    # Ctrl-C): no labels to read the module from, so the exit record says it.
+    install_module()
+    ex = remote(new_exit, module="faketor", lease="de", port=9050)
+    exits.save(ex)  # the record is all down() has to go by
+    prov_name = paths.provider_container_name("faketor", "de")
+    prov, manifest = providers.load("faketor")
+    ctx = providers.context_for("faketor", manifest)
+    fake.start(prov.container_spec(ctx, lease="de"))
+    assert prov_name in fake.containers and paths.gateway_name(ex.id) not in fake.containers
+    gateway.down(ex.id)
+    assert prov_name not in fake.containers
+
+
+def test_down_leaves_a_provider_another_gateway_still_uses(new_exit, fake):
+    install_module()
+    a = remote(new_exit, module="faketor", lease="de", port=9050)
+    b = a.model_copy(update={"id": "bbbbbbbb-0000-0000-0000-000000000000", "name": "b"})
+    gateway.up(b, measure=False)  # b is up and exits through the provider
+    gateway.down(a.id)  # a never came up; its provider is b's too
+    assert paths.provider_container_name("faketor", "de") in fake.containers
 
 
 def test_reconcile_fails_closed_on_a_drifted_provider(new_exit, fake):

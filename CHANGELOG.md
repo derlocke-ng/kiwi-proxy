@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.0
+
+What a module needs from you, asked in one place.
+
+- **Module settings.** A module declares what it needs before it can run —
+  a file, a password, a text — and the app's Provider modules dialog gets a
+  **Configure…** button for it: a file chooser, an unechoed password field.
+  The CLI has `module settings NAME` and `module config NAME KEY=VALUE …
+  --ask KEY`; `module status` and `module list` say when a module is not
+  configured. (kiwi-plugin-myst 0.3.0 uses it for the identity keystore and
+  its passphrase.)
+- **Every country, by name.** The exit editor's country field is a searchable
+  list — "DE — Germany (361)" — filled by the module with where it can actually
+  exit and how many exits it has there (kiwi-plugin-tor 0.3.0: Tor's running
+  exit relays from the Tor directory; kiwi-plugin-myst 0.3.0: discovery's
+  provider counts). A module that cannot say gets every country there is.
+  `kiwi-proxy module countries NAME` prints the same list.
+- **Leases by country.** `module leases NAME --country DE`, and the exit editor
+  asks the module again as the country changes — Mysterium has hundreds of
+  providers per country. Modules that cannot filter are called as before.
+- The editor loads a module's leases off the main thread, and keeps the choice
+  made so far while it does.
+- **Tunnel modules work under SELinux.** A container given `/dev/net/tun` runs
+  with `--security-opt label=disable`: Fedora's `container_t` may not open the
+  device, so every tunnel (gluetun, the Mysterium node) failed with "failed to
+  create TUN device: permission denied". Caps, `no-new-privileges` and the user
+  namespace are unchanged.
+- A provider container that fails to start is removed again, and the error
+  quotes its last log lines — stdout and stderr, colours stripped. `kiwi-proxy
+  down` of an exit whose gateway never came up still lets its provider go.
+- Measuring an exit asks ipinfo.io and then am.i.mullvad.net when ifconfig.co
+  refuses (a hosting exit gets an empty 429 there), and a refusal is reported
+  with its HTTP status instead of "unparseable data ''".
+- `--country` takes only a real two-letter code, lowercased; a word is refused
+  with a pointer to `module countries`.
+
 ## 0.3.1
 
 The app has its icon back, and is called Kiwi Proxy.

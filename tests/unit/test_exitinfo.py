@@ -61,6 +61,14 @@ def test_refuses_an_error_or_a_stub(tmp_path, monkeypatch, response):
     assert out.read_text() == "previous\n"  # a failed fetch keeps the old list
 
 
+def test_a_refusal_is_said_not_printed_as_the_answer(monkeypatch, capsys):
+    port = fake_forwarder(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n")
+    monkeypatch.setenv("KF_FORWARDER_PORT", str(port))
+    assert xi.main(["kf-exitinfo", "http://ip.example/json"]) == 1
+    got = capsys.readouterr()
+    assert got.out == "" and "429 Too Many Requests" in got.err and "ip.example" in got.err
+
+
 def test_prints_the_exit_info(monkeypatch, capsys):
     body = b'{"ip": "198.51.100.7"}'
     port = fake_forwarder(

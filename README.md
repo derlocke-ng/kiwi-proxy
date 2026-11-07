@@ -144,7 +144,14 @@ over a private bridge and still permits exactly one destination.
 ```
 kiwi install kiwi-plugin-vpn
 kiwi-proxy module list            # `module leases vpn` for exits, `module doctor`
+kiwi-proxy module config mysterium keystore=~/0x….json --ask passphrase   # what a module needs from you
+kiwi-proxy module countries tor                                          # where a module can exit, with counts
+kiwi-proxy module leases mysterium --country DE                          # providers there, best first
 ```
+
+A module that needs something from you — Mysterium's identity keystore and its
+passphrase — says so in `module settings NAME`; the app asks for the same under
+*Provider modules → Configure…*.
 
 See [docs/plugin-system.md](docs/plugin-system.md) for how modules work and how to
 write one.

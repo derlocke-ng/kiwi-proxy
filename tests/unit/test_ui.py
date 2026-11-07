@@ -124,6 +124,87 @@ def test_a_bad_endpoint_is_said_not_raised():
     assert ed.status_label.get_visible() and "parse" in ed.status_label.get_text()
 
 
+def test_the_config_dialog_asks_for_a_modules_settings():
+    from test_module_settings import MODULE_SRC
+
+    from kiwi_proxy import paths
+    from kiwi_proxy.ui.dialogs import ModuleConfigDialog, ModulesDialog
+
+    mdir = paths.module_dir("fakemyst")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(MODULE_SRC)
+    ModulesDialog()  # a Configure… button beside Set up for a module with settings
+    dialog = ModuleConfigDialog("fakemyst")
+    assert set(dialog.rows) == {"keystore", "passphrase"}
+    import pytest
+
+    with pytest.raises(ValueError, match="Keystore"):
+        dialog.collect()
+    dialog._files["keystore"] = "/w.json"
+    dialog.rows["passphrase"].set_text("pw")
+    assert dialog.collect() == {"keystore": "/w.json", "passphrase": "pw"}
+
+
+def _pump(until, timeout=5.0):
+    import time
+
+    from gi.repository import GLib
+
+    ctx = GLib.MainContext.default()
+    deadline = time.monotonic() + timeout
+    while not until() and time.monotonic() < deadline:
+        while ctx.pending():
+            ctx.iteration(False)
+        time.sleep(0.01)
+    assert until(), "the editor never heard back from the module"
+
+
+def test_the_country_row_is_a_list_the_module_fills():
+    from test_module_settings import MODULE_SRC
+
+    from kiwi_proxy import paths
+    from kiwi_proxy.ui.dialogs import ANY_COUNTRY, ExitEditor
+
+    mdir = paths.module_dir("fakemyst")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(MODULE_SRC)
+    ed = ExitEditor(None, lambda e: None)
+    assert isinstance(ed.country_row, Adw.ComboRow)
+    assert ed.country is None and ed.country_row.get_model().get_string(0) == ANY_COUNTRY
+    ed.source_row.set_selected(1 + ed._modules.index("fakemyst"))
+    _pump(lambda: ed.country_row.get_model().get_n_items() == 3)
+    model = ed.country_row.get_model()
+    assert [model.get_string(i) for i in range(3)] == [
+        ANY_COUNTRY,
+        "DE — Germany (1)",
+        "SE — Sweden (1)",
+    ]
+    ed.country_row.set_selected(2)
+    assert ed.country == "SE"
+    _pump(lambda: ed.lease_row.get_subtitle().startswith("1 to choose from in SE"))
+    ed.name_row.set_text("north")
+    ed.lease_row.set_selected(1)
+    form = ed.collect()
+    assert form["endpoint"].module == "fakemyst"
+    assert form["endpoint"].country == "se" and form["endpoint"].lease == "0xse1"
+
+
+def test_editing_a_module_exit_keeps_its_country():
+    from test_module_settings import MODULE_SRC
+
+    from kiwi_proxy import paths
+    from kiwi_proxy.ui.dialogs import ExitEditor
+
+    mdir = paths.module_dir("fakemyst")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(MODULE_SRC)
+    ex = exits.create("de", exits.module_endpoint("fakemyst", lease=None, country="de"))
+    ed = ExitEditor(ex, lambda e: None)
+    _pump(lambda: ed.country_row.get_model().get_n_items() == 3)
+    assert ed.country == "DE"
+    assert ed.collect()["endpoint"].country == "de"
+
+
 def test_details_and_modules_build(monkeypatch):
     from kiwi_proxy.ui.dialogs import ExitDetails, ModulesDialog, proxy_url
 

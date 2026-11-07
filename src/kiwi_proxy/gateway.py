@@ -492,9 +492,15 @@ def down(exit_id: str) -> None:
     podman.rm(name)
     podman.secret_rm(paths.creds_secret_name(exit_id))
     podman.secret_rm(paths.expose_secret_name(exit_id))
-    module = lab.get(paths.MODULE_LABEL)
+    module, lease = lab.get(paths.MODULE_LABEL), lab.get(paths.LEASE_LABEL)
+    if not module and exits.exists(exit_id):
+        # No gateway to read the labels from — it never came up, the provider
+        # may have — so the exit says which provider to let go of.
+        ex = exits.load(exit_id)
+        if providers.manages(ex.endpoint.module):
+            module, lease = ex.endpoint.module, ex.endpoint.lease
     if module:
-        _release_provider(module, lab.get(paths.LEASE_LABEL), exclude=name)
+        _release_provider(module, lease, exclude=name)
 
 
 def release(exit_id: str, *, ignore: tuple[str, ...] = ()) -> bool:
@@ -512,16 +518,22 @@ def release(exit_id: str, *, ignore: tuple[str, ...] = ()) -> bool:
 
 
 # ------------------------------------------------------------------- measuring
-def measure_exit(gateway: str, url: str = endpoint.DEFAULT_GEO_URL) -> ExitInfo:
+def measure_exit(gateway: str, url: str | None = None) -> ExitInfo:
     """What the world sees, asked from inside the namespace through the forwarder —
-    so it works for every exit, including provider exits the host cannot reach."""
-    proc = podman.exec_(gateway, ["kf-exitinfo", url], timeout=45)
-    if proc.returncode != 0:
-        raise GatewayError((proc.stderr or proc.stdout).strip() or "exit probe failed")
-    try:
-        return endpoint.parse_geo(proc.stdout)
-    except endpoint.EndpointError as exc:
-        raise GatewayError(str(exc)) from exc
+    so it works for every exit, including provider exits the host cannot reach.
+    The ip-echo services in endpoint.GEO_URLS are asked in turn (or the one
+    given): one may refuse an exit the next one serves."""
+    failures: list[str] = []
+    for geo in [url] if url else list(endpoint.GEO_URLS):
+        proc = podman.exec_(gateway, ["kf-exitinfo", geo], timeout=45)
+        if proc.returncode != 0:
+            failures.append((proc.stderr or proc.stdout).strip() or f"{geo}: exit probe failed")
+            continue
+        try:
+            return endpoint.parse_geo(proc.stdout)
+        except endpoint.EndpointError as exc:
+            failures.append(f"{geo}: {exc}")
+    raise GatewayError("; ".join(failures) or "exit probe failed")
 
 
 # --------------------------------------------------------------- housekeeping

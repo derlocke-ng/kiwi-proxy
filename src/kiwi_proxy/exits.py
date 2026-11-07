@@ -13,7 +13,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from . import paths, providers, secrets
+from . import countries, paths, providers, secrets
 from .models import DnsConfig, Endpoint, Exit, Expose, ProviderRecord
 
 
@@ -43,12 +43,17 @@ def module_endpoint(module: str, *, lease: str | None, country: str | None) -> E
         raise providers.ProviderError(
             f"{module!r} does not produce its own endpoint; give an endpoint"
         )
+    if country and not countries.is_code(country):
+        raise ExitError(
+            f"--country takes a two-letter code, not {country!r}: "
+            f"`kiwi-proxy module countries {module}` lists them"
+        )
     return Endpoint(
         host=paths.provider_static_ip(module, lease),
         port=manifest.socks_port,
         module=module,
         lease=lease or None,
-        country=country or None,
+        country=country.lower() if country else None,
     )
 
 
