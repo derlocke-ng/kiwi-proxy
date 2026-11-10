@@ -300,6 +300,10 @@ def plan(ex: Exit, password: str | None = None, *, measure: bool = True) -> Endp
     if providers.manages(ex.endpoint.module):
         return ensure_provider(ex)
 
+    try:
+        endpoint.reachable(ex.endpoint)
+    except endpoint.EndpointError as exc:
+        raise GatewayError(f"{ex.name}: {exc}") from exc
     notes: list[str] = []
     endpoint_ip = endpoint.resolve(ex.endpoint.host)
     if endpoint_ip != ex.endpoint.host:

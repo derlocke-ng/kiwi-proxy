@@ -11,9 +11,10 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from .. import dns, exits, gateway, paths, podman, snapshots  # noqa: E402
+from .. import dns, exits, gateway, paths, podman, snapshots, storage  # noqa: E402
 from ..snapshots import items as snapshot_items  # noqa: E402
 from . import snapshots as snapshot_ui  # noqa: E402
+from . import storage as storage_ui  # noqa: E402
 from . import worker  # noqa: E402
 from .dialogs import ExitDetails, ExitEditor, ModulesDialog, proxy_url  # noqa: E402
 
@@ -96,6 +97,7 @@ class Window(Adw.ApplicationWindow):
         menu.append("Snapshot everything now", "win.snapshot-all")
         menu.append("Set up environment", "win.setup")
         menu.append("Check environment", "win.doctor")
+        menu.append("Check and repair", "win.storage")
         menu.append("Tidy up unused gateways", "win.reap")
         menu.append("Take down the exits made here", "win.down-all")
         menu.append("About Kiwi Proxy", "app.about")
@@ -171,6 +173,7 @@ class Window(Adw.ApplicationWindow):
             ("setup", lambda *_: self._run_setup()),
             ("doctor", lambda *_: self._check_environment(announce=True)),
             ("reap", lambda *_: self._reap()),
+            ("storage", lambda *_: storage_ui.check_and_repair(self, self.refresh)),
             ("down-all", lambda *_: self._down_all()),
         ):
             action = Gio.SimpleAction.new(name, None)
@@ -192,6 +195,7 @@ class Window(Adw.ApplicationWindow):
 
         self.refresh()
         self._check_environment()
+        self._repair_on_start()
         GLib.timeout_add_seconds(REFRESH_SECONDS, self._tick)
 
     # ------------------------------------------------------------------ list
@@ -601,6 +605,16 @@ class Window(Adw.ApplicationWindow):
                 go()
 
         worker.run(who, ask, lambda exc: self._alert("Could not see who uses the exits", str(exc)))
+
+    def _repair_on_start(self) -> None:
+        """Remove kiwi-proxy's own containers a crash or a reset left behind."""
+
+        def done(gone) -> None:
+            if gone:
+                self._toast(f"Removed {len(gone)} container(s) left from an unclean stop")
+                self.refresh()
+
+        worker.run(lambda: storage.remove_leftovers("kiwi-proxy"), done, lambda _exc: None)
 
     def _reap(self) -> None:
         def work():

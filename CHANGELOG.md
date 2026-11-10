@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.2
+
+- **A dead proxy fails at once.** Bringing up an exit whose proxy did not answer
+  took 37 to 52 seconds (measured on the dev VM): 15 for the pre-flight's connect,
+  about 21 for the gateway's resolver waiting on an upstream that never answers,
+  and 5 for each of three echo services. Before a gateway is started its proxy is
+  now asked for a SOCKS5 greeting: a refused port fails in under a second, no
+  answer in five, and the error says which ("refuses connections", "does not
+  answer", "is not a SOCKS5 proxy"). Provider exits (Tor, Mysterium) are not
+  affected.
+- **Check and repair** in the menu, and `kiwi-proxy storage check|repair`:
+  podman's quick storage check (`podman system check --quick`, 0.07 s; the full
+  one takes 13 s and reported 1142 mtime-only changes on healthy images), with
+  every broken container named and whose it is. Repair removes Kiwi's broken
+  containers, others only when asked (`--theirs-too`), then lets podman repair
+  what is left. The dialog is shared with Kiwi Fox and Kiwi Custodia.
+- **Repair on start:** the window removes kiwi-proxy's own containers a crash or
+  a reset left ("created", "exited", "dead"); `kiwi-proxy storage leftovers
+  --remove` by hand. One made in the last two minutes is left alone, since
+  another app may be starting it.
+
 ## 0.8.1
 
 - **Snapshot everything now, in the app.** `kiwi-proxy snapshot now` had no

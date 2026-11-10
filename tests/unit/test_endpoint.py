@@ -1,6 +1,10 @@
+import socket
+
 import pytest
 
+from kiwi_proxy import endpoint
 from kiwi_proxy.endpoint import EndpointError, ProxyError, parse, parse_geo, resolve
+from kiwi_proxy.models import Endpoint
 
 
 @pytest.mark.parametrize(
@@ -121,3 +125,96 @@ def test_socks5_connect_falls_back_to_the_name(monkeypatch):
     monkeypatch.setattr(endpoint, "_ipv4_of", lambda host: None)
     endpoint.socks5_connect(Endpoint(host="127.0.0.1", port=port), "onion.example", 80).close()
     assert seen == [(0x03, b"onion.example")]
+
+
+# ------------------------------------------------------------ reachability
+def _server(reply: bytes | None):
+    """A listener on a free port that answers `reply` to the first bytes it gets
+    (None: accepts and says nothing)."""
+    import threading
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(4)
+    conns = []
+
+    def serve():
+        while True:
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            conns.append(conn)
+            if reply is not None:
+                conn.recv(16)
+                conn.sendall(reply)
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv, srv.getsockname()[1]
+
+
+def test_reachable_answers_fast_for_a_proxy_that_speaks_socks5():
+    from conftest import REAL_REACHABLE
+
+    srv, port = _server(b"\x05\x00")
+    try:
+        REAL_REACHABLE(Endpoint(host="127.0.0.1", port=port), timeout=2)
+    finally:
+        srv.close()
+
+
+@pytest.mark.parametrize(
+    ("reply", "says"),
+    [
+        (None, "does not answer as SOCKS5"),
+        (b"HTTP/1.1 400 Bad Request\r\n", "not a SOCKS5 proxy"),
+        (b"", "closed the connection|dropped the connection"),
+    ],
+)
+def test_reachable_names_what_is_wrong(reply, says):
+    import time
+
+    from conftest import REAL_REACHABLE
+
+    srv, port = _server(reply if reply != b"" else None)
+    if reply == b"":
+        # accepts, then closes without a word
+        srv.close()
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        import threading
+
+        threading.Thread(target=lambda: srv.accept()[0].close(), daemon=True).start()
+    start = time.monotonic()
+    try:
+        with pytest.raises(endpoint.EndpointError, match=says):
+            REAL_REACHABLE(Endpoint(host="127.0.0.1", port=port), timeout=0.5)
+    finally:
+        srv.close()
+    assert time.monotonic() - start < 2
+
+
+def test_reachable_refused():
+    from conftest import REAL_REACHABLE
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()  # nothing listens there now
+    with pytest.raises(endpoint.EndpointError, match="refuses connections"):
+        REAL_REACHABLE(Endpoint(host="127.0.0.1", port=port), timeout=1)
+
+
+def test_a_dead_proxy_stops_the_plan_before_any_container(monkeypatch):
+    from conftest import make_exit
+
+    from kiwi_proxy import gateway
+
+    def dead(ep, timeout=None):
+        raise endpoint.EndpointError("the proxy at 10.64.0.1:1080 refuses connections")
+
+    monkeypatch.setattr(endpoint, "reachable", dead)
+    with pytest.raises(gateway.GatewayError, match="work: the proxy at 10.64.0.1:1080 refuses"):
+        gateway.plan(make_exit(), measure=False)

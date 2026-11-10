@@ -385,6 +385,46 @@ def cmd_reap(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_storage(a: argparse.Namespace) -> int:
+    """Podman's quick storage check; with --repair, remove what is broken."""
+    from . import storage
+
+    if a.storage_cmd == "leftovers":
+        found = storage.leftovers(a.app)
+        gone = storage.remove([c.name for c in found]) if a.remove else []
+        for c in found:
+            _p(f"{c.name:40} {c.state}{'  removed' if c.name in gone else ''}")
+        if not found:
+            _p("none")
+        return 0
+    report = storage.check()
+    if report.error:
+        return _fail(f"could not check: {report.error}")
+    if report.ok:
+        _p("podman's storage is fine")
+        return 0
+    _p("podman's storage is damaged")
+    for c in report.broken:
+        _p(f"  {c.name:40} {c.app or 'not kiwi'}")
+    if report.layers and not report.broken:
+        _p(f"  {len(report.layers)} damaged layer(s) no container uses")
+    if a.storage_cmd != "repair":
+        _p("kiwi-proxy storage repair removes the kiwi ones (--theirs-too: the others as well)")
+        return 1
+    names = [c.id for c in report.ours] + ([c.id for c in report.others] if a.theirs_too else [])
+    if not a.yes:
+        listed = [c.name for c in report.broken if c.id in names] or ["no container"]
+        answer = input(f"remove {', '.join(listed)} and repair? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            _p("nothing changed")
+            return 1
+    after = storage.repair(report, names)
+    _p("repaired: podman's storage is fine" if after.ok else "still damaged:")
+    for c in after.broken:
+        _p(f"  {c.name:40} {c.app or 'not kiwi'}")
+    return 0 if after.ok else 1
+
+
 def cmd_dns(a: argparse.Namespace) -> int:
     if a.dns_cmd == "sync":
         found = dns.sync_stamps()
@@ -1009,6 +1049,16 @@ def build_parser() -> argparse.ArgumentParser:
     ps.set_defaults(func=cmd_ps)
 
     sub.add_parser("reap", help="tear down gateways nobody uses").set_defaults(func=cmd_reap)
+    st = sub.add_parser("storage", help="check podman's storage, repair it, remove leftovers")
+    stsub = st.add_subparsers(dest="storage_cmd", required=True)
+    stsub.add_parser("check", help="podman system check --quick, with names")
+    sr = stsub.add_parser("repair", help="remove broken containers and repair")
+    sr.add_argument("--theirs-too", action="store_true", help="also containers that are not kiwi's")
+    sr.add_argument("--yes", "-y", action="store_true")
+    sl = stsub.add_parser("leftovers", help="an app's containers a crash left behind")
+    sl.add_argument("--app", default="kiwi-proxy", help="kiwi-proxy, kiwi-fox or kiwi-custodia")
+    sl.add_argument("--remove", action="store_true")
+    st.set_defaults(func=cmd_storage)
 
     dn_ = sub.add_parser("dns", help="resolver stamps and blocklists")
     dsub = dn_.add_subparsers(dest="dns_cmd", required=True)

@@ -152,6 +152,48 @@ def socks5_connect(
         raise
 
 
+REACH_TIMEOUT = 5.0
+
+
+def reachable(endpoint: Endpoint, timeout: float = REACH_TIMEOUT) -> None:
+    """Raise EndpointError when the proxy itself does not answer: the port
+    refuses, nothing comes back within `timeout`, or what answers is not SOCKS5.
+    A few milliseconds when it does answer. Asked before a gateway is started, so
+    a dead proxy fails at once instead of after every later timeout (measured on
+    the VM: 37 to 52 s of resolver wait and echo-service retries)."""
+    where = f"{endpoint.host}:{endpoint.port}"
+    try:
+        sock = socket.create_connection((endpoint.host, endpoint.port), timeout=timeout)
+    except TimeoutError as exc:
+        raise EndpointError(
+            f"the proxy at {where} does not answer (no reply in {timeout:.0f} s)"
+        ) from exc
+    except ConnectionRefusedError as exc:
+        raise EndpointError(f"the proxy at {where} refuses connections") from exc
+    except OSError as exc:
+        raise EndpointError(
+            f"the proxy at {where} cannot be reached: {exc.strerror or exc}"
+        ) from exc
+    try:
+        sock.settimeout(timeout)
+        sock.sendall(b"\x05\x02\x00\x02" if endpoint.username else b"\x05\x01\x00")
+        try:
+            reply = sock.recv(2)
+        except TimeoutError as exc:
+            raise EndpointError(
+                f"the proxy at {where} accepts connections but does not answer as SOCKS5 "
+                f"(nothing in {timeout:.0f} s)"
+            ) from exc
+        except OSError as exc:
+            raise EndpointError(f"the proxy at {where} dropped the connection: {exc}") from exc
+        if not reply:
+            raise EndpointError(f"the proxy at {where} closed the connection at once")
+        if reply[:1] != b"\x05":
+            raise EndpointError(f"what answers at {where} is not a SOCKS5 proxy")
+    finally:
+        sock.close()
+
+
 def _recv_exact(sock: socket.socket, n: int) -> bytes:
     buf = b""
     while len(buf) < n:
