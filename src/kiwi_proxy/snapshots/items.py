@@ -222,6 +222,30 @@ def local_items() -> dict[tuple[str, str], str]:
     return found
 
 
+def take_all() -> str:
+    """Snapshot every exit and every module's settings now; what was taken, as a
+    line ("3 exits and 1 module setting · 4 kB")."""
+    exits_taken = modules_taken = size = 0
+    for (kind, item), _name in sorted(local_items().items()):
+        if kind == EXIT:
+            meta = take_exit(exits.load(item))
+            exits_taken += 1
+        else:
+            meta = take_module(item)
+            modules_taken += 1
+        size += meta.size
+    from . import size_text
+
+    bits = []
+    if exits_taken:
+        bits.append(f"{exits_taken} exit{'s' if exits_taken != 1 else ''}")
+    if modules_taken:
+        bits.append(f"{modules_taken} module setting{'s' if modules_taken != 1 else ''}")
+    if not bits:
+        return "nothing to snapshot yet"
+    return f"{' and '.join(bits)} · {size_text(size)}"
+
+
 def find_in_folder(ref: str) -> tuple[str, str, str]:
     """An exit or `module:NAME` named in the folder: (kind, item id, name). For an
     exit that is not on this device."""

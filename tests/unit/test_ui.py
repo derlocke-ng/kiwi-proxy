@@ -530,3 +530,23 @@ def test_the_history_dialog_lists_and_takes(snapshot_env, tmp_path):
     dialog.take_button.emit("clicked")
     _pump(lambda: len(dialog.rows) == 2)
     assert "1 of" not in dialog.status.get_label() and "2 of 5 kept" in dialog.status.get_label()
+
+
+def test_everything_is_snapshotted_from_the_page_and_the_menu(snapshot_env, tmp_path):
+    from kiwi_proxy import snapshots
+    from kiwi_proxy.snapshots import items
+    from kiwi_proxy.ui.snapshots import SnapshotsPage
+    from kiwi_proxy.ui.window import Window
+
+    snapshot_env("lime")
+    snapshots.setup(tmp_path / "shared", PASSPHRASE, device_name="lime")
+    a = exits.create("a", Endpoint(host="10.64.0.1", port=1080))
+    b = exits.create("b", Endpoint(host="10.64.0.2", port=1080))
+    page = SnapshotsPage("x", take_all=items.take_all, take_all_text="every exit")
+    page.take_all_button.emit("clicked")
+    _pump(lambda: page.take_all_row.get_subtitle().startswith("Taken just now: 2 exits"))
+    assert len(snapshots.history("exit", a.id)) == 1 and len(snapshots.history("exit", b.id)) == 1
+
+    win = Window(application=None)
+    win.lookup_action("snapshot-all").activate(None)
+    _pump(lambda: len(snapshots.history("exit", a.id)) == 2)

@@ -93,6 +93,7 @@ class Window(Adw.ApplicationWindow):
         menu = Gio.Menu()
         menu.append("Preferences", "win.preferences")
         menu.append("Provider modules", "win.modules")
+        menu.append("Snapshot everything now", "win.snapshot-all")
         menu.append("Set up environment", "win.setup")
         menu.append("Check environment", "win.doctor")
         menu.append("Tidy up unused gateways", "win.reap")
@@ -162,6 +163,7 @@ class Window(Adw.ApplicationWindow):
 
         for name, handler in (
             ("preferences", lambda *_: self._open_preferences()),
+            ("snapshot-all", lambda *_: self._snapshot_all()),
             (
                 "modules",
                 lambda *_: ModulesDialog(self._toast, self._module_configured).present(self),
@@ -779,8 +781,28 @@ class Window(Adw.ApplicationWindow):
         page = snapshot_ui.SnapshotsPage(
             "when you add or change an exit, or configure a module",
             on_changed=self._snapshots_changed,
+            take_all=snapshot_items.take_all,
+            take_all_text="every exit, with its passwords, and every module's settings",
         )
         snapshot_ui.preferences_dialog(page).present(self)
+
+    def _snapshot_all(self) -> None:
+        """Every exit and every module's settings, now."""
+        if not snapshots.load_settings():
+            self._open_preferences()
+            return
+        if not snapshots.unlocked():
+            snapshot_ui.ask_unlock(self, self._snapshot_all)
+            return
+        self._toast("Taking snapshots…")
+
+        def done(summary: str) -> None:
+            self._toast(f"Snapshots taken: {summary}")
+            self._snapshots_changed()
+
+        worker.run(
+            snapshot_items.take_all, done, lambda exc: self._alert("No snapshot taken", str(exc))
+        )
 
     def _parse_item(self, param) -> tuple[str, str]:
         kind, _, item = param.get_string().partition(":")

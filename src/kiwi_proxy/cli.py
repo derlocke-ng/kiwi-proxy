@@ -784,6 +784,9 @@ def cmd_snapshot(a: argparse.Namespace) -> int:
             if a.refs
             else [(k, i, n, True) for (k, i), n in sorted(snapshot_items.local_items().items())]
         )
+        if not targets:
+            _p("nothing to snapshot yet: no exits, no module settings")
+            return 0
         for kind, item, name, here in targets:
             if not here:
                 return _fail(f"{name} is not on this device")

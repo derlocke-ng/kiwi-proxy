@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1
+
+- **Snapshot everything now, in the app.** `kiwi-proxy snapshot now` had no
+  counterpart in the window: there was only Snapshots… per exit. The main menu has
+  "Snapshot everything now", and the Snapshots preferences page a row with the same
+  button; both take every exit and every module's settings and say what they took.
+  The page's row is shared, so Kiwi Fox and Kiwi Custodia offer the same for theirs.
+
 ## 0.8.0
 
 **Snapshots: your exits on your other devices.** One folder, chosen once per

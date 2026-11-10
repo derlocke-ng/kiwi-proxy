@@ -188,11 +188,20 @@ class SnapshotsPage(Adw.PreferencesPage):
     """The Snapshots page (shared by the three apps; one settings file).
 
     `automatic_text` says what "automatically" means in this app ("when you add or
-    change an exit", "when a profile stops")."""
+    change an exit", "when a profile stops"). `take_all` snapshots everything the
+    app has, now, and says what it took; `take_all_text` says what that is."""
 
-    def __init__(self, automatic_text: str, on_changed: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        automatic_text: str,
+        on_changed: Callable[[], None] | None = None,
+        *,
+        take_all: Callable[[], str] | None = None,
+        take_all_text: str = "",
+    ) -> None:
         super().__init__(title="Snapshots", icon_name="document-save-symbolic")
         self._on_changed = on_changed
+        self._take_all = take_all
         self._syncing = False
 
         self.folder_row = _row("Folder")
@@ -224,6 +233,13 @@ class SnapshotsPage(Adw.PreferencesPage):
         self.when = Adw.PreferencesGroup(title="When")
         for r in (self.automatic_row, self.ask_row, self.keep_row):
             self.when.add(r)
+        self.take_all_row = None
+        if take_all is not None:
+            self.take_all_row = _row("Snapshot everything now", take_all_text)
+            self.take_all_button = _button("Snapshot now", "suggested-action")
+            self.take_all_button.connect("clicked", self._on_take_all)
+            self.take_all_row.add_suffix(self.take_all_button)
+            self.when.add(self.take_all_row)
         self.add(self.when)
 
         self.lock_row = _row("Passphrase")
@@ -302,6 +318,29 @@ class SnapshotsPage(Adw.PreferencesPage):
 
     def _on_keep(self, row: Adw.SpinRow, _pspec) -> None:
         self._save(lambda s: setattr(s, "keep", int(row.get_value())))
+
+    def _on_take_all(self, button: Gtk.Button) -> None:
+        assert self._take_all is not None and self.take_all_row is not None
+        row = self.take_all_row
+        before = row.get_subtitle()
+        button.set_sensitive(False)
+        row.set_subtitle("taking snapshots…")
+
+        def done(summary: str) -> None:
+            button.set_sensitive(True)
+            row.set_subtitle(f"Taken just now: {summary}")
+            if self._on_changed:
+                self._on_changed()
+
+        def failed(exc: Exception) -> None:
+            button.set_sensitive(True)
+            row.set_subtitle(before)
+            if isinstance(exc, snapshots.Locked):
+                ask_unlock(self, self.sync)
+            else:
+                _alert(self, "No snapshot taken", str(exc))
+
+        worker.run(self._take_all, done, failed)
 
     def _on_lock_button(self, *_args) -> None:
         if snapshots.unlocked():
@@ -487,10 +526,11 @@ def ask_newer(
     on_restore: Callable[[], None],
     on_as_is: Callable[[], None],
     on_keep_mine: Callable[[], None] | None = None,
+    on_cancel: Callable[[], None] | None = None,
 ) -> None:
     """The folder has a newer copy of `name` (or both sides changed): ask before
     using this device's. `verb` is what the user was about to do ("bring up",
-    "start")."""
+    "start"). With no `parent` the question gets a window of its own."""
     head = rel.head
     assert head is not None
     when = snapshots.when_text(head.created)
@@ -524,6 +564,8 @@ def ask_newer(
             on_as_is()
         elif response == "mine":
             (on_keep_mine or on_as_is)()
+        elif on_cancel:
+            on_cancel()
 
     dialog.connect("response", on_response)
     dialog.present(parent)
