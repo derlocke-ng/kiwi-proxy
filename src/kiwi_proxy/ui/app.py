@@ -26,6 +26,7 @@ class Application(Adw.Application):
         about = Gio.SimpleAction.new("about", None)
         about.connect("activate", self._on_about)
         self.add_action(about)
+        self.set_accels_for_action("win.preferences", ["<Control>comma"])
 
     def do_activate(self) -> None:  # noqa: N802
         window = self.props.active_window or Window(application=self)

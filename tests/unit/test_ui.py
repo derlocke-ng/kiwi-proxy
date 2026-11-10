@@ -399,3 +399,134 @@ def test_the_window_opens_large_and_remembers_its_size(monkeypatch):
     assert again.get_default_size() == (900, 700)
     (paths.config_dir() / "window.json").write_text('{"width": 10, "height": 10}')
     assert Window(application=None).get_default_size() == (640, 480)  # never unusably small
+
+
+# -------------------------------------------------------------- snapshots
+@pytest.fixture
+def snapshot_env(monkeypatch, tmp_path):
+    """Fast gpg and a hermetic 'device' for the snapshot screens."""
+    import contextlib
+    import shutil
+    import subprocess
+    import tempfile
+
+    from kiwi_proxy import gateway, snapshots
+    from kiwi_proxy.snapshots import crypt
+    from kiwi_proxy.snapshots.folder import Folder
+
+    if crypt.missing_tools():
+        pytest.skip("snapshots need gpg and zstd")
+    home = tempfile.mkdtemp(prefix="kp-ui-gpg-")
+    monkeypatch.setattr(crypt, "S2K_COUNT", 1024)
+    monkeypatch.setattr(crypt, "_gpg_home", lambda: contextlib.nullcontext(home))
+    monkeypatch.setattr(gateway, "running", lambda: [])
+    monkeypatch.setattr(gateway, "is_up", lambda exit_id: False)
+    snapshots._session.clear()
+    Folder.forget_unlocked()
+
+    def device(name):
+        for var in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR"):
+            monkeypatch.setenv(var, str(tmp_path / name / var.lower()))
+        snapshots._session.clear()
+        Folder.forget_unlocked()
+
+    yield device
+    snapshots._session.clear()
+    Folder.forget_unlocked()
+    subprocess.run(["gpgconf", "--homedir", home, "--kill", "all"], capture_output=True)
+    shutil.rmtree(home, ignore_errors=True)
+
+
+PASSPHRASE = "correct horse battery staple"
+
+
+def test_the_snapshots_page_before_and_after_setup(snapshot_env, tmp_path):
+    from kiwi_proxy import snapshots
+    from kiwi_proxy.ui.snapshots import SnapshotsPage
+
+    snapshot_env("lime")
+    page = SnapshotsPage("when you add or change an exit")
+    assert page.folder_row.get_subtitle().startswith("not chosen yet")
+    assert not page.when.get_sensitive() and not page.crypt.get_sensitive()
+
+    snapshots.setup(tmp_path / "shared", PASSPHRASE, device_name="lime")
+    page.sync()
+    assert page.folder_row.get_subtitle() == str(tmp_path / "shared")
+    assert page.device_row.get_text() == "lime"
+    assert page.lock_button.get_label() == "Lock this device"
+    page.automatic_row.set_active(False)
+    page.keep_row.set_value(7)
+    s = snapshots.load_settings()
+    assert s.automatic is False and s.keep == 7
+    page.lock_button.emit("clicked")
+    assert page.lock_button.get_label() == "Unlock…" and not snapshots.unlocked()
+
+
+def test_the_window_offers_what_is_only_in_the_folder(snapshot_env, tmp_path):
+    from kiwi_proxy import snapshots
+    from kiwi_proxy.snapshots import items
+    from kiwi_proxy.ui.window import Window
+
+    snapshot_env("lime")
+    snapshots.setup(tmp_path / "shared", PASSPHRASE, device_name="lime")
+    ex = exits.create("mullvad", Endpoint(host="10.64.0.1", port=1080))
+    items.take_exit(ex)
+
+    snapshot_env("titan")
+    snapshots.setup(tmp_path / "shared", PASSPHRASE, device_name="titan")
+    win = Window(application=None)
+    _pump(lambda: win.away_group.get_visible())
+    assert win.stack.get_visible_child_name() == "list"
+    assert not win.group.get_visible()  # no exits of its own yet
+    row = win._away_rows[0]
+    assert row.get_title() == "mullvad" and "from lime" in row.get_subtitle()
+    assert not win.snap_banner.get_revealed()
+
+
+def test_the_window_says_when_the_folder_is_newer_and_when_it_is_locked(snapshot_env, tmp_path):
+    from kiwi_proxy import snapshots
+    from kiwi_proxy.snapshots import items
+    from kiwi_proxy.ui.window import Window
+
+    snapshot_env("lime")
+    snapshots.setup(tmp_path / "shared", PASSPHRASE, device_name="lime")
+    ex = exits.create("mullvad", Endpoint(host="10.64.0.1", port=1080))
+    first = items.take_exit(ex)
+
+    snapshot_env("titan")
+    snapshots.setup(tmp_path / "shared", PASSPHRASE, device_name="titan")
+    items.restore_exit(ex.id, first.id)
+    restored = exits.load(ex.id)
+    restored.notes = "changed on titan"
+    exits.save(restored)
+    items.take_exit(restored)
+
+    snapshot_env("lime")
+    win = Window(application=None)
+    _pump(lambda: win._relations.get(ex.id) is not None)
+    assert "newer snapshot from titan" in win._rows[ex.id].get_subtitle()
+
+    snapshots.lock()
+    win._poll_snapshots()
+    _pump(lambda: win.snap_banner.get_revealed())
+
+
+def test_the_history_dialog_lists_and_takes(snapshot_env, tmp_path):
+    from kiwi_proxy import snapshots
+    from kiwi_proxy.snapshots import items
+    from kiwi_proxy.ui.snapshots import HistoryDialog
+
+    snapshot_env("lime")
+    snapshots.setup(tmp_path / "shared", PASSPHRASE, device_name="lime")
+    ex = exits.create("mullvad", Endpoint(host="10.64.0.1", port=1080))
+    items.take_exit(ex)
+    dialog = HistoryDialog(
+        "exit", ex.id, ex.name, here=True,
+        take=lambda: items.take_exit(exits.load(ex.id)),
+        restore=lambda sid: items.restore_exit(ex.id, sid),
+    )  # fmt: skip
+    _pump(lambda: len(dialog.rows) == 1)
+    assert "lime" in dialog.rows[0].get_subtitle()
+    dialog.take_button.emit("clicked")
+    _pump(lambda: len(dialog.rows) == 2)
+    assert "1 of" not in dialog.status.get_label() and "2 of 5 kept" in dialog.status.get_label()

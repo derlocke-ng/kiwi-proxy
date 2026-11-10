@@ -8,8 +8,20 @@ import json
 import shutil
 import sys
 
-from . import __version__, dns, endpoint, exits, gateway, paths, podman, providers, secrets
+from . import (
+    __version__,
+    dns,
+    endpoint,
+    exits,
+    gateway,
+    paths,
+    podman,
+    providers,
+    secrets,
+    snapshots,
+)
 from .models import DnsConfig, Exit, Expose
+from .snapshots import items as snapshot_items
 
 
 def _p(*args: object) -> None:
@@ -127,12 +139,15 @@ def cmd_add(a: argparse.Namespace) -> int:
     if a.socks_auth:
         ex.socks_auth = a.socks_auth
         exits.save(ex)
+    note = snapshot_items.auto_exit(ex)
     if a.json:
         return _json(_exit_dict(ex))
     _p(f"added {ex.name} ({ex.id[:8]}) -> {ex.endpoint.label}")
     if ex.expose:
         _p(f"  host SOCKS5 at {ex.expose.address} once up")
     _p(f"  bring it up: kiwi-proxy up {ex.name}")
+    if note:
+        _p(f"  {note}")
     return 0
 
 
@@ -220,6 +235,8 @@ def cmd_set(a: argparse.Namespace) -> int:
         f"{ex.name} saved"
         + (f" — `kiwi-proxy up --replace {ex.name}` applies it now" if gateway.is_up(ex.id) else "")
     )
+    if note := snapshot_items.auto_exit(ex):
+        _p(f"  {note}")
     return 0
 
 
@@ -250,8 +267,25 @@ def cmd_rm(a: argparse.Namespace) -> int:
     return 0
 
 
+def _newer_snapshot_note(ex: Exit) -> str | None:
+    """A line when the snapshot folder holds a newer copy of the exit than this
+    device's; nothing when snapshots are not set up, locked, or say nothing new."""
+    s = snapshots.load_settings()
+    if s is None or not s.ask_older:
+        return None
+    try:
+        rel = snapshots.relation(snapshot_items.EXIT, ex.id, here=True)
+    except (snapshots.SnapshotError, OSError):
+        return None
+    if not rel.newer_elsewhere:
+        return None
+    return f"{rel.describe()}: kiwi-proxy snapshot restore {ex.name}"
+
+
 def cmd_up(a: argparse.Namespace) -> int:
     ex = exits.resolve_ref(a.ref)
+    if note := _newer_snapshot_note(ex):
+        print(f"kiwi-proxy: {note}", file=sys.stderr)
     try:
         gw = gateway.up(ex, replace=a.replace, keep=True, measure=not a.no_measure)
     except gateway.GatewayError as exc:
@@ -521,6 +555,8 @@ def cmd_module(a: argparse.Namespace) -> int:
             return _fail(f"missing: {', '.join(missing)} (kiwi-proxy module settings {a.name})")
         for line in prov.configure(ctx, values):
             _p(f"  {line}")
+        if note := snapshot_items.auto_module(a.name):
+            _p(f"  {note}")
         return 0
     if cmd == "up":
         prov, manifest = providers.load(a.name)
@@ -598,10 +634,256 @@ def cmd_doctor(a: argparse.Namespace) -> int:
         ok &= state != "missing"
     _p(f"exits         {len(exits.list_exits())}")
     _p(f"modules       {', '.join(providers.discover()) or 'none'}")
+    snap = snapshots.status()
+    if snap.missing_tools:
+        _p(f"snapshots     need {' and '.join(snap.missing_tools)} (everything else works)")
+    elif snap.settings is None:
+        _p("snapshots     not set up — kiwi-proxy snapshot setup FOLDER")
+    else:
+        state = "unlocked" if snap.unlocked else "locked — kiwi-proxy snapshot unlock"
+        where = "" if snap.folder_present else " (folder not there)"
+        _p(f"snapshots     {snap.settings.folder}{where}, {state}")
     return 0 if ok else 1
 
 
-# -------------------------------------------------------------------- parser
+# ----------------------------------------------------------------- snapshots
+_APP_OF_KIND = {"profile": "Kiwi Fox", "box": "Kiwi Custodia"}
+
+
+def _read_passphrase(a: argparse.Namespace, prompt: str, *, confirm: bool = False) -> str:
+    """From stdin (one line) with --passphrase-stdin, else asked unechoed."""
+    if getattr(a, "passphrase_stdin", False):
+        return sys.stdin.readline().rstrip("\n")
+    first = getpass.getpass(prompt)
+    if confirm and getpass.getpass("Again: ") != first:
+        raise snapshots.SnapshotError("the two passphrases differ")
+    return first
+
+
+def _snapshot_ref(ref: str) -> tuple[str, str, str, bool]:
+    """(kind, item, name, here) for an exit name or id, or module:NAME; an exit that
+    is not on this device is looked up in the folder."""
+    if ref.startswith("module:"):
+        name = ref.split(":", 1)[1]
+        return snapshot_items.MODULE, name, name, snapshot_items.module_has_state(name)
+    try:
+        ex = exits.resolve_ref(ref)
+        return snapshot_items.EXIT, ex.id, ex.name, True
+    except exits.ExitError:
+        kind, item, name = snapshot_items.find_in_folder(ref)
+        return kind, item, name, False
+
+
+def _snap_line(meta: snapshots.Meta) -> str:
+    aside = " · kept before a restore" if meta.aside else ""
+    return (
+        f"{meta.id}  {snapshots.when_text(meta.created):20} {meta.device:12} "
+        f"{snapshots.size_text(meta.size):>8}{aside}"
+    )
+
+
+def cmd_snapshot(a: argparse.Namespace) -> int:
+    cmd = a.snapshot_cmd
+    if cmd == "setup":
+        from pathlib import Path
+
+        folder = Path(a.folder).expanduser()
+        joining = snapshots.Folder.at(folder.absolute()) is not None
+        if joining:
+            secret = _read_passphrase(a, "Passphrase of the snapshot folder: ")
+        else:
+            _p(f"A new snapshot folder. Choose a passphrase of at least {snapshots.MIN_PASSPHRASE}")
+            _p("characters; every device needs it once, and without it nothing in the folder")
+            _p("can be read. It cannot be recovered.")
+            secret = _read_passphrase(a, "Passphrase: ", confirm=True)
+        s, created = snapshots.setup(
+            folder, secret, device_name=a.device, remember=not a.no_remember
+        )
+        _p(f"{'made' if created else 'joined'} {s.folder} as {s.device_name}")
+        if not a.no_remember:
+            _p("  the passphrase is kept in this device's keyring")
+        if created:
+            _p("  add the folder to your sync client (Nextcloud) to have it on other devices")
+            _p("  kiwi-proxy snapshot now   takes the first snapshots of your exits")
+        return 0
+    if cmd == "status":
+        st = snapshots.status()
+        if st.settings is None:
+            _p("not set up — kiwi-proxy snapshot setup FOLDER")
+            return 0
+        s = st.settings
+        _p(f"folder     {s.folder}{'' if st.folder_present else '  (not there)'}")
+        _p(f"device     {s.device_name}")
+        _p(f"state      {'unlocked' if st.unlocked else 'locked — kiwi-proxy snapshot unlock'}")
+        _p(f"automatic  {'on' if s.automatic else 'off'}   keep {s.keep} per item")
+        _p(f"ask first  {'yes' if s.ask_older else 'no'} before using an older copy")
+        if st.missing_tools:
+            _p(f"missing    {', '.join(st.missing_tools)}")
+        return 0
+    if cmd == "unlock":
+        secret = _read_passphrase(a, "Passphrase of the snapshot folder: ")
+        snapshots.unlock(secret, remember=not a.no_remember)
+        _p("unlocked" + ("" if a.no_remember else " — kept in this device's keyring"))
+        return 0
+    if cmd == "lock":
+        snapshots.lock()
+        _p("locked — the passphrase is no longer kept on this device")
+        return 0
+    if cmd == "set":
+        s = snapshots.load_settings()
+        if s is None:
+            return _fail("not set up — kiwi-proxy snapshot setup FOLDER")
+        if a.keep is not None:
+            if not 1 <= a.keep <= snapshots.MAX_KEEP:
+                return _fail(f"--keep takes 1 to {snapshots.MAX_KEEP}")
+            s.keep = a.keep
+        if a.automatic is not None:
+            s.automatic = a.automatic == "on"
+        if a.ask_older is not None:
+            s.ask_older = a.ask_older == "on"
+        if a.device:
+            s.device_name = a.device
+        snapshots.save_settings(s)
+        _p(
+            f"saved: keep {s.keep}, automatic {'on' if s.automatic else 'off'}, device {s.device_name}"
+        )
+        return 0
+    if cmd == "list":
+        cat = snapshots.catalog()
+        local = snapshot_items.local_items()
+        folder_id = snapshots.folder().id
+        rows = []
+        for key in sorted(set(cat) | set(local), key=lambda k: (k[0], (cat.get(k) or [None])[0])):
+            kind, item = key
+            metas = cat.get(key, [])
+            name = local.get(key) or (metas[0].name if metas else item)
+            if kind in _APP_OF_KIND:
+                state = f"({_APP_OF_KIND[kind]})"
+            else:
+                rel = snapshots.relation(
+                    kind, item, here=key in local, metas=metas, folder_id=folder_id
+                )
+                state = rel.describe()
+            newest = (
+                f"{metas[0].device}, {snapshots.when_text(metas[0].created)} · {len(metas)} kept"
+                if metas
+                else ""
+            )
+            rows.append((kind, name, state, newest))
+        if not rows:
+            _p("nothing in the snapshot folder yet — kiwi-proxy snapshot now")
+            return 0
+        width = max(len(r[1]) for r in rows)
+        state_width = max(len(r[2]) for r in rows)
+        for kind, name, state, newest in rows:
+            _p(f"{kind:8} {name:{width}}  {state:{state_width}}  {newest}".rstrip())
+        return 0
+    if cmd == "now":
+        targets = (
+            [_snapshot_ref(r) for r in a.refs]
+            if a.refs
+            else [(k, i, n, True) for (k, i), n in sorted(snapshot_items.local_items().items())]
+        )
+        for kind, item, name, here in targets:
+            if not here:
+                return _fail(f"{name} is not on this device")
+            if kind == snapshot_items.EXIT:
+                meta = snapshot_items.take_exit(exits.load(item))
+            else:
+                meta = snapshot_items.take_module(item)
+            _p(f"{kind} {name}: snapshot taken ({snapshots.size_text(meta.size)})")
+        return 0
+    if cmd == "history":
+        kind, item, name, _here = _snapshot_ref(a.ref)
+        metas = snapshots.history(kind, item)
+        if not metas:
+            _p(f"no snapshot of {name} yet")
+            return 0
+        for meta in metas:
+            _p(_snap_line(meta))
+        return 0
+    if cmd == "restore":
+        kind, item, name, here = _snapshot_ref(a.ref)
+        if a.id:
+            sid = a.id
+        else:
+            rel = snapshots.relation(kind, item, here=here)
+            if rel.head is None:
+                return _fail(f"no snapshot of {name} in the folder")
+            sid = rel.head.id
+            if here and rel.state == "same":
+                _p(f"{name} is the newest snapshot already")
+                return 0
+        if here and not a.yes:
+            if not sys.stdin.isatty():
+                return _fail(f"{name} is on this device; restoring replaces it — pass --yes")
+            answer = input(f"Replace this device's {name} with snapshot {sid[:8]}? [y/N] ")
+            if answer.strip().lower() not in ("y", "yes"):
+                _p("nothing changed")
+                return 1
+        if kind == snapshot_items.EXIT:
+            restored = snapshot_items.restore_exit(item, sid)
+            _p(f"restored exit {restored.name}")
+        else:
+            snapshot_items.restore_module(item, sid)
+            _p(f"restored the settings of module {item}")
+        if here:
+            _p("  what was here is kept as a snapshot: kiwi-proxy snapshot history " + a.ref)
+        return 0
+    if cmd == "forget":
+        kind, item, name, _here = _snapshot_ref(a.ref)
+        if not a.yes:
+            return _fail(f"this deletes every snapshot of {name} from the folder — pass --yes")
+        removed = snapshots.forget(kind, item)
+        _p(f"deleted {removed} snapshot(s) of {name}")
+        return 0
+    return _fail(f"unknown snapshot command {cmd}")
+
+
+def _snapshot_parser(sub) -> None:
+    sn = sub.add_parser(
+        "snapshot", help="encrypted snapshots of exits and module settings, for other devices"
+    )
+    ssub = sn.add_subparsers(dest="snapshot_cmd", required=True)
+
+    def passphrase_args(p) -> None:
+        p.add_argument(
+            "--passphrase-stdin", action="store_true", help="read the passphrase from stdin"
+        )
+        p.add_argument(
+            "--no-remember", action="store_true", help="do not keep it in this device's keyring"
+        )
+
+    st = ssub.add_parser("setup", help="choose the snapshot folder: make a new one or join one")
+    st.add_argument("folder")
+    st.add_argument("--device", help="what this device is called in snapshots (default: hostname)")
+    passphrase_args(st)
+    ssub.add_parser("status", help="folder, device, locked or not")
+    un = ssub.add_parser("unlock", help="enter the passphrase on this device")
+    passphrase_args(un)
+    ssub.add_parser("lock", help="forget the passphrase on this device")
+    se = ssub.add_parser("set", help="change how snapshots are taken")
+    se.add_argument("--keep", type=int, help=f"snapshots kept per item, 1 to {snapshots.MAX_KEEP}")
+    se.add_argument("--automatic", choices=("on", "off"), help="snapshot an exit when it changes")
+    se.add_argument(
+        "--ask-older", choices=("on", "off"), help="warn before using a copy the folder has newer"
+    )
+    se.add_argument("--device", help="what this device is called in snapshots")
+    ssub.add_parser("list", help="everything in the snapshot folder, and how it relates to here")
+    nw = ssub.add_parser("now", help="snapshot exits and module settings now")
+    nw.add_argument("refs", nargs="*", metavar="REF", help="an exit, or module:NAME; default all")
+    hi = ssub.add_parser("history", help="the snapshots of one exit (or module:NAME)")
+    hi.add_argument("ref")
+    rs = ssub.add_parser("restore", help="restore an exit (or module:NAME) from the folder")
+    rs.add_argument("ref")
+    rs.add_argument("--id", help="which snapshot (see history); default the newest")
+    rs.add_argument("--yes", action="store_true", help="replace this device's copy without asking")
+    fg = ssub.add_parser("forget", help="delete every snapshot of an exit from the folder")
+    fg.add_argument("ref")
+    fg.add_argument("--yes", action="store_true")
+    sn.set_defaults(func=cmd_snapshot)
+
+
 def _endpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--module", help="a provider module that produces the endpoint (tor, vpn, …)")
     p.add_argument("--lease", help="which of the module's exits (see `module leases`)")
@@ -774,6 +1056,8 @@ def build_parser() -> argparse.ArgumentParser:
     mse.add_argument("name")
     msub.add_parser("doctor", help="check installed provider modules")
     m.set_defaults(func=cmd_module)
+
+    _snapshot_parser(sub)
     return ap
 
 
@@ -788,6 +1072,7 @@ def main(argv: list[str] | None = None) -> int:
         podman.PodmanError,
         gateway.GatewayError,
         providers.ProviderError,
+        snapshots.SnapshotError,
     ) as exc:
         return _fail(str(exc))
     except KeyboardInterrupt:

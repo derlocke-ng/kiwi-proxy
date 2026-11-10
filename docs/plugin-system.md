@@ -186,6 +186,16 @@ exit editor and `kiwi-proxy module leases` then speak that language ("137 nodes 
 choose from", a row titled *Node*, "Node id, 0xcbb6…eb78 for example"). Without it
 a lease is an "exit".
 
+### What a snapshot leaves out
+
+A module's settings travel to the user's other devices in snapshots (see
+[snapshots.md](snapshots.md)): its whole `ctx.state_dir` and its podman secrets.
+`snapshot_exclude` on the provider class names what to leave out, as paths relative
+to the state folder or shell patterns: anything the module rebuilds, and anything
+a running container writes (a copy taken then could be torn). Mysterium leaves out
+the node's database (`"myst/mainnet"`), Tor its country cache. Read with getattr:
+an older kiwi-proxy ignores it.
+
 ### Countries
 
 `countries(ctx)` says where a module can exit: `Country(code, name, count)`, the

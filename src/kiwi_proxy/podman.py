@@ -185,6 +185,27 @@ def secret_rm(name: str) -> None:
     _run(["secret", "rm", name], check=False)
 
 
+def secret_names(prefix: str = "") -> list[str]:
+    out = _run(["secret", "ls", "--format", "{{.Name}}"], check=False).stdout
+    return sorted(n for n in out.split() if n.startswith(prefix))
+
+
+def secret_value(name: str) -> str:
+    """A secret's value, exactly as stored (podman 4.5 and later can show it).
+
+    The default output is a JSON list; ``--format json`` would print the word
+    "json", and a Go template adds a newline the value may not have."""
+    proc = _run(["secret", "inspect", "--showsecret", name], check=False)
+    if proc.returncode != 0:
+        raise PodmanError(f"could not read secret {name}: {proc.stderr.strip()}")
+    try:
+        data = json.loads(proc.stdout)
+        entry = data[0] if isinstance(data, list) else data
+        return entry["SecretData"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise PodmanError(f"podman showed secret {name} in a shape kiwi-proxy cannot read") from exc
+
+
 def secret_exists(name: str) -> bool:
     return _run(["secret", "inspect", name], check=False).returncode == 0
 

@@ -99,3 +99,21 @@ def test_commit_does_not_pause_and_checks_the_image_is_there(monkeypatch):
     monkeypatch.setattr(podman, "_run", gone)
     with pytest.raises(podman.PodmanError, match="not there"):
         podman.commit("kc-box-1", "localhost/kc/box-1:latest")
+
+
+def test_a_secret_is_read_back_exactly(monkeypatch):
+    """podman 5's real output shape for `secret inspect --showsecret` (no --format:
+    `--format json` prints the word "json")."""
+    calls = []
+
+    def run(args, *, check=True, timeout=120):
+        calls.append(args)
+        out = (
+            '[{"ID": "abc", "CreatedAt": "2026-11-10T17:00:00Z", "Spec": {"Name": "kf-mod-x-p"},'
+            ' "SecretData": "probe-456\\n"}]'
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(podman, "_run", run)
+    assert podman.secret_value("kf-mod-x-p") == "probe-456\n"
+    assert "--format" not in calls[0]

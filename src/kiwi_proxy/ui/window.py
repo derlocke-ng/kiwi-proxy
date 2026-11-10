@@ -11,9 +11,15 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from .. import dns, exits, gateway, paths, podman  # noqa: E402
+from .. import dns, exits, gateway, paths, podman, snapshots  # noqa: E402
+from ..snapshots import items as snapshot_items  # noqa: E402
+from . import snapshots as snapshot_ui  # noqa: E402
 from . import worker  # noqa: E402
 from .dialogs import ExitDetails, ExitEditor, ModulesDialog, proxy_url  # noqa: E402
+
+# How often the snapshot folder is looked at (in window ticks): a sync client
+# brings new snapshots now and then, not every few seconds.
+SNAPSHOT_TICKS = 5
 
 # A window large enough for the largest dialog (the picker is 720×780) to open at
 # its own size instead of being squeezed; the size it had when last closed wins.
@@ -69,6 +75,13 @@ class Window(Adw.ApplicationWindow):
         self._busy: set[str] = set()
         self._up: dict[str, dict] = {}  # exit id -> gateway row from gateway.running()
         self._polling = False
+        # What the snapshot folder says, refreshed every SNAPSHOT_TICKS ticks:
+        # relations of this device's exits, and items that are only in the folder.
+        self._relations: dict[str, snapshots.Relation] = {}
+        self._away: list[tuple[str, str, str, list[snapshots.Meta]]] = []
+        self._away_rows: list[Adw.ActionRow] = []
+        self._snap_polling = False
+        self._ticks = 0
 
         self.toasts = Adw.ToastOverlay()
         header = Adw.HeaderBar()
@@ -78,6 +91,7 @@ class Window(Adw.ApplicationWindow):
         header.pack_start(new_button)
 
         menu = Gio.Menu()
+        menu.append("Preferences", "win.preferences")
         menu.append("Provider modules", "win.modules")
         menu.append("Set up environment", "win.setup")
         menu.append("Check environment", "win.doctor")
@@ -94,6 +108,12 @@ class Window(Adw.ApplicationWindow):
         self.status_banner = Adw.Banner(revealed=False)
         self.status_banner.set_button_label("Set up")
         self.status_banner.connect("button-clicked", lambda *_: self._run_setup())
+        self.snap_banner = Adw.Banner(
+            title="Snapshots are locked on this device", button_label="Unlock", revealed=False
+        )
+        self.snap_banner.connect(
+            "button-clicked", lambda *_: snapshot_ui.ask_unlock(self, self._snapshots_changed)
+        )
 
         self.page = Adw.PreferencesPage()
         self.group = Adw.PreferencesGroup(
@@ -102,6 +122,10 @@ class Window(Adw.ApplicationWindow):
             "Containers join it; with a host port, anything on this computer can use it.",
         )
         self.page.add(self.group)
+        self.away_group = Adw.PreferencesGroup(
+            title="In your snapshot folder, not on this device", visible=False
+        )
+        self.page.add(self.away_group)
 
         self.empty = Adw.StatusPage(
             icon_name="network-vpn-symbolic",
@@ -113,7 +137,16 @@ class Window(Adw.ApplicationWindow):
         create.add_css_class("suggested-action")
         create.add_css_class("pill")
         create.connect("clicked", self._on_new)
-        self.empty.set_child(create)
+        from_folder = Gtk.Button(label="Use a snapshot folder", halign=Gtk.Align.CENTER)
+        from_folder.add_css_class("pill")
+        from_folder.set_tooltip_text("Bring the exits of another device here, from snapshots")
+        from_folder.connect(
+            "clicked", lambda *_: snapshot_ui.choose_folder(self, self._snapshots_changed)
+        )
+        buttons = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, halign=Gtk.Align.CENTER)
+        buttons.append(create)
+        buttons.append(from_folder)
+        self.empty.set_child(buttons)
 
         self.stack = Gtk.Stack()
         self.stack.add_named(self.page, "list")
@@ -122,12 +155,17 @@ class Window(Adw.ApplicationWindow):
         view = Adw.ToolbarView()
         view.add_top_bar(header)
         view.add_top_bar(self.status_banner)
+        view.add_top_bar(self.snap_banner)
         view.set_content(self.stack)
         self.toasts.set_child(view)
         self.set_content(self.toasts)
 
         for name, handler in (
-            ("modules", lambda *_: ModulesDialog(self._toast).present(self)),
+            ("preferences", lambda *_: self._open_preferences()),
+            (
+                "modules",
+                lambda *_: ModulesDialog(self._toast, self._module_configured).present(self),
+            ),
             ("setup", lambda *_: self._run_setup()),
             ("doctor", lambda *_: self._check_environment(announce=True)),
             ("reap", lambda *_: self._reap()),
@@ -143,6 +181,8 @@ class Window(Adw.ApplicationWindow):
             ("check", self._act_check),
             ("copy-gateway", self._act_copy_gateway),
             ("delete", self._act_delete),
+            ("snapshots", self._act_snapshots),
+            ("forget-snapshots", self._act_forget_snapshots),
         ):
             action = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
             action.connect("activate", handler)
@@ -158,13 +198,18 @@ class Window(Adw.ApplicationWindow):
         return False  # and close
 
     def _tick(self) -> bool:
+        self._ticks += 1
+        if self._ticks % SNAPSHOT_TICKS == 0:
+            self._poll_snapshots()
         self.refresh(rebuild=False)
         return True
 
     def refresh(self, rebuild: bool = True) -> None:
         found = exits.list_exits()
-        self.stack.set_visible_child_name("list" if found else "empty")
+        self.stack.set_visible_child_name("list" if found or self._away else "empty")
+        self.group.set_visible(bool(found))
         if rebuild:
+            self._poll_snapshots()
             for row in self._rows.values():
                 self.group.remove(row)
             self._rows.clear()
@@ -242,6 +287,7 @@ class Window(Adw.ApplicationWindow):
         menu.append("Edit…", f"win.edit::{ex.id}")
         menu.append("Duplicate", f"win.duplicate::{ex.id}")
         menu.append("Check the exit", f"win.check::{ex.id}")
+        menu.append("Snapshots…", f"win.snapshots::exit:{ex.id}")
         menu.append("Copy gateway name", f"win.copy-gateway::{ex.id}")
         menu.append("Delete", f"win.delete::{ex.id}")
         more = Gtk.MenuButton(
@@ -267,6 +313,9 @@ class Window(Adw.ApplicationWindow):
             bits.append("provider gone — see its logs")
         if ex.owner:
             bits.append(f"from {ex.owner}")
+        rel = self._relations.get(ex.id)
+        if rel and rel.newer_elsewhere:
+            bits.append(rel.describe())
         row.set_subtitle(" · ".join(bits))
         row.copy_button.set_visible(bool(ex.expose))  # type: ignore[attr-defined]
 
@@ -311,6 +360,26 @@ class Window(Adw.ApplicationWindow):
         self.refresh()
         note = " — take it down and up again to apply" if ex.id in self._up else ""
         self._toast(f"Saved {ex.name}{note}")
+        self._auto_snapshot(ex)
+
+    def _auto_snapshot(self, ex) -> None:
+        """The automatic snapshot after an exit was added or changed, off the main
+        loop; a toast only when it could not be taken."""
+
+        def done(note) -> None:
+            if note:
+                self._toast(note)
+            self._poll_snapshots()
+
+        worker.run(lambda: snapshot_items.auto_exit(ex), done, lambda _exc: None)
+
+    def _module_configured(self, name: str) -> None:
+        def done(note) -> None:
+            if note:
+                self._toast(note)
+            self._poll_snapshots()
+
+        worker.run(lambda: snapshot_items.auto_module(name), done, lambda _exc: None)
 
     def _act_check(self, _action, param) -> None:
         ex = self._exit(param.get_string())
@@ -390,6 +459,7 @@ class Window(Adw.ApplicationWindow):
     def _after_create(self, ex) -> None:
         self.refresh()
         self._toast(f"Added {ex.name}")
+        self._auto_snapshot(ex)
 
     def _on_toggle(self, _button, ident: str) -> None:
         ex = self._exit(ident)
@@ -398,6 +468,49 @@ class Window(Adw.ApplicationWindow):
         if ident in self._up:
             self._confirm_down(ex)
             return
+        rel = self._relations.get(ident)
+        s = snapshots.load_settings()
+        if rel and rel.newer_elsewhere and s and s.ask_older:
+
+            def restore_then_up() -> None:
+                def work():
+                    assert rel.head is not None
+                    return snapshot_items.restore_exit(ident, rel.head.id)
+
+                def done(restored) -> None:
+                    self._relations.pop(ident, None)
+                    self.refresh()
+                    self._bring_up(restored)
+
+                worker.run(
+                    work, done, lambda exc: self._alert(f"Could not restore {ex.name}", str(exc))
+                )
+
+            def keep_mine() -> None:
+                def work():
+                    return snapshot_items.take_exit(ex, supersede=rel.heads)
+
+                def done(_meta) -> None:
+                    self._relations.pop(ident, None)
+                    self._poll_snapshots()
+                    self._bring_up(ex)
+
+                worker.run(work, done, lambda exc: self._alert("No snapshot taken", str(exc)))
+
+            snapshot_ui.ask_newer(
+                self,
+                ex.name,
+                rel,
+                verb="bring up",
+                on_restore=restore_then_up,
+                on_as_is=lambda: self._bring_up(ex),
+                on_keep_mine=keep_mine,
+            )
+            return
+        self._bring_up(ex)
+
+    def _bring_up(self, ex) -> None:
+        ident = ex.id
         self._busy.add(ident)
         self.refresh(rebuild=False)
 
@@ -553,6 +666,180 @@ class Window(Adw.ApplicationWindow):
             self._alert("Setup failed", str(exc))
 
         worker.run(lambda: setup.run(progress=say), done, failed)
+
+    # ------------------------------------------------------------- snapshots
+    def _poll_snapshots(self) -> None:
+        """Read the snapshot folder off the main loop: how this device's exits relate
+        to it, and what is in it that is not here."""
+        if self._snap_polling:
+            return
+        self._snap_polling = True
+
+        def work():
+            st = snapshots.status()
+            if st.settings is None or not st.folder_present or not st.unlocked:
+                return st, {}, []
+            opened = snapshots.folder()
+            local = snapshot_items.local_items()
+            grouped: dict[tuple[str, str], list[snapshots.Meta]] = {}
+            for meta in opened.metas():
+                if meta.kind in (snapshot_items.EXIT, snapshot_items.MODULE):
+                    grouped.setdefault((meta.kind, meta.item), []).append(meta)
+            relations = {}
+            away = []
+            for (kind, item), metas in grouped.items():
+                if (kind, item) in local:
+                    if kind == snapshot_items.EXIT:
+                        relations[item] = snapshots.relation(
+                            kind, item, here=True, metas=metas, folder_id=opened.id
+                        )
+                else:
+                    away.append((kind, item, metas[0].name, metas))
+            away.sort(key=lambda a: (a[0], a[2]))
+            return st, relations, away
+
+        def done(result) -> None:
+            self._snap_polling = False
+            st, relations, away = result
+            locked = bool(st.settings and st.folder_present and not st.unlocked)
+            self.snap_banner.set_revealed(locked)
+            changed = relations != self._relations or [a[:3] for a in away] != [
+                a[:3] for a in self._away
+            ]
+            self._relations = relations
+            self._away = away
+            if changed:
+                self._show_away()
+                self.refresh(rebuild=False)
+
+        def failed(_exc: Exception) -> None:
+            self._snap_polling = False
+
+        worker.run(work, done, failed)
+
+    def _show_away(self) -> None:
+        for row in self._away_rows:
+            self.away_group.remove(row)
+        self._away_rows = []
+        for kind, item, name, metas in self._away:
+            head = metas[0]
+            what = head.extra.get("label") if kind == snapshot_items.EXIT else "module settings"
+            row = Adw.ActionRow(use_markup=False)
+            row.set_title(name if kind == snapshot_items.EXIT else f"{name} (module)")
+            row.set_subtitle(
+                " · ".join(
+                    x
+                    for x in (
+                        what,
+                        f"from {head.device}, {snapshots.when_text(head.created)}",
+                        snapshots.size_text(head.size),
+                    )
+                    if x
+                )
+            )
+            restore = Gtk.Button(label="Restore", valign=Gtk.Align.CENTER)
+            restore.connect("clicked", self._on_restore_away, kind, item, name, head.id)
+            row.add_suffix(restore)
+            menu = Gio.Menu()
+            menu.append("Snapshots…", f"win.snapshots::{kind}:{item}")
+            menu.append("Delete from the snapshot folder", f"win.forget-snapshots::{kind}:{item}")
+            more = Gtk.MenuButton(
+                icon_name="view-more-symbolic", valign=Gtk.Align.CENTER, menu_model=menu
+            )
+            more.add_css_class("flat")
+            row.add_suffix(more)
+            self.away_group.add(row)
+            self._away_rows.append(row)
+        self.away_group.set_visible(bool(self._away))
+        self.stack.set_visible_child_name(
+            "list" if self._rows or self._away or exits.list_exits() else "empty"
+        )
+
+    def _restore_item(self, kind: str, item: str, sid: str):
+        if kind == snapshot_items.EXIT:
+            return snapshot_items.restore_exit(item, sid)
+        return snapshot_items.restore_module(item, sid)
+
+    def _on_restore_away(self, _button, kind: str, item: str, name: str, sid: str) -> None:
+        def done(_r) -> None:
+            self._toast(f"Restored {name}")
+            self._snapshots_changed()
+
+        worker.run(
+            lambda: self._restore_item(kind, item, sid),
+            done,
+            lambda exc: self._alert(f"Could not restore {name}", str(exc)),
+        )
+
+    def _snapshots_changed(self) -> None:
+        self._relations = {}
+        self.refresh()
+
+    def _open_preferences(self) -> None:
+        page = snapshot_ui.SnapshotsPage(
+            "when you add or change an exit, or configure a module",
+            on_changed=self._snapshots_changed,
+        )
+        snapshot_ui.preferences_dialog(page).present(self)
+
+    def _parse_item(self, param) -> tuple[str, str]:
+        kind, _, item = param.get_string().partition(":")
+        return kind, item
+
+    def _act_snapshots(self, _action, param) -> None:
+        kind, item = self._parse_item(param)
+        if not snapshots.load_settings():
+            self._open_preferences()
+            return
+        if not snapshots.unlocked():
+            snapshot_ui.ask_unlock(self, lambda: self._act_snapshots(_action, param))
+            return
+        here = (kind, item) in snapshot_items.local_items()
+        if kind == snapshot_items.EXIT:
+            ex = self._exit(item)
+            name = ex.name if ex else next((a[2] for a in self._away if a[1] == item), item)
+            take = (lambda: snapshot_items.take_exit(exits.load(item))) if here else None
+        else:
+            name = item
+            take = (lambda: snapshot_items.take_module(item)) if here else None
+        snapshot_ui.HistoryDialog(
+            kind,
+            item,
+            name,
+            here=here,
+            take=take,
+            restore=lambda sid: self._restore_item(kind, item, sid),
+            on_changed=self._snapshots_changed,
+            toast=self._toast,
+        ).present(self)
+
+    def _act_forget_snapshots(self, _action, param) -> None:
+        kind, item = self._parse_item(param)
+        name = next((a[2] for a in self._away if a[0] == kind and a[1] == item), item)
+        dialog = Adw.AlertDialog(
+            heading=f"Delete the snapshots of {name}?",
+            body="Every snapshot of it is deleted from the snapshot folder, on every device "
+            "that syncs the folder. This cannot be undone.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response: str) -> None:
+            if response != "delete":
+                return
+            worker.run(
+                lambda: snapshots.forget(kind, item),
+                lambda n: (
+                    self._toast(f"Deleted {n} snapshot(s) of {name}"),
+                    self._snapshots_changed(),
+                ),
+                lambda exc: self._alert("Could not delete", str(exc)),
+            )
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
 
     # ---------------------------------------------------------------- toasts
     def _toast(self, text: str) -> None:

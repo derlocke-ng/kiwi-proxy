@@ -1029,9 +1029,10 @@ class ModuleConfigDialog(Adw.Dialog):
 class ModulesDialog(Adw.Dialog):
     """The installed provider modules: are their images there, are they running."""
 
-    def __init__(self, toast=None) -> None:
+    def __init__(self, toast=None, on_configured=None) -> None:
         super().__init__(title="Provider modules", content_width=560, content_height=520)
         self._toast = toast
+        self._on_configured = on_configured  # (module name) -> None, e.g. a snapshot
         self._setup_buttons: list[Gtk.Button] = []  # disabled together: one build at a time
         page = Adw.PreferencesPage()
         self.group = Adw.PreferencesGroup(
@@ -1115,6 +1116,8 @@ class ModulesDialog(Adw.Dialog):
             self._status(name, row)
             if self._toast:
                 self._toast(lines[0] if lines else f"{name} configured")
+            if self._on_configured:
+                self._on_configured(name)
 
         ModuleConfigDialog(name, done).present(self)
 

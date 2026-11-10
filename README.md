@@ -129,6 +129,23 @@ An exit on the tor module is passthrough by default: a member without SOCKS
 credentials still gets the exit's token, so the same exit serves Tor Browser, a
 Camoufox profile and a tool alike.
 
+### Snapshots, for your other devices
+
+Exits and module settings, passwords included, go into one encrypted folder that
+your sync client (Nextcloud) carries to your other devices; Kiwi Fox and Kiwi
+Custodia use the same folder. The passphrase is entered once per device and kept in
+its keyring. Snapshots are taken when you add or change an exit, and on demand.
+
+```bash
+kiwi-proxy snapshot setup ~/Nextcloud/kiwi-snapshots
+kiwi-proxy snapshot list
+kiwi-proxy snapshot restore mullvad-se
+```
+
+In the app: Preferences (Ctrl+,) → Snapshots. See
+[docs/snapshots.md](docs/snapshots.md), which also says how to open a snapshot by
+hand with gpg.
+
 ## Provider modules
 
 Each module is its own kiwi app and exposes plain SOCKS5; the gateway reaches it
@@ -161,6 +178,7 @@ write one.
 - [docs/architecture.md](docs/architecture.md) — gateways, members, the host listener, providers
 - [docs/consumers.md](docs/consumers.md) — the API kiwi-fox, kiwi-pentesting and others use
 - [docs/plugin-system.md](docs/plugin-system.md) — the provider contract
+- [docs/snapshots.md](docs/snapshots.md) — snapshots for other devices: the folder, the encryption, which copy is newer
 - [docs/kiwi-server.md](docs/kiwi-server.md) — hosting exits on a node or the master
 - [docs/decisions.md](docs/decisions.md) — why things are the way they are
 

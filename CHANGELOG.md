@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.8.0
+
+**Snapshots: your exits on your other devices.** One folder, chosen once per
+device, holds encrypted snapshots; your sync client (Nextcloud) carries it to your
+other devices, and Kiwi Fox and Kiwi Custodia will use the same folder.
+
+- **What travels:** each exit with both of its passwords, and each provider
+  module's settings with its podman secrets (for Mysterium the keystore, the
+  identity and its passphrase; the node's database stays).
+- **When:** automatically after you add or change an exit or configure a module,
+  and whenever you ask. Five are kept per item, ten at most.
+- **Encrypted** with gpg (AES-256, the passphrase stretched to gpg's maximum).
+  The passphrase is entered once per device and kept in its GNOME keyring. Nothing
+  in the folder names what it holds: no exit names, no device names, no times.
+  A snapshot opens by hand with gpg, zstd and tar.
+- **Which copy is newer** is decided by lineage, not clocks. An exit the folder
+  holds a newer copy of says so in its row, and bringing it up asks first: restore
+  and bring up, or bring up as it is. When both devices changed it, you choose.
+  A restore keeps what was here as a snapshot first, so it can be undone.
+- **In the app:** Preferences (Ctrl+,) with the Snapshots page; Snapshots… in an
+  exit's menu (history, Snapshot now, Restore); a group "In your snapshot folder,
+  not on this device"; a banner when snapshots are locked; "Use a snapshot folder"
+  on a device with no exits yet.
+- **On the command line:** `kiwi-proxy snapshot setup | status | unlock | lock | set
+  | list | now | history | restore | forget`. `up` warns when the folder holds a
+  newer copy. See docs/snapshots.md.
+- Provider modules may name what a snapshot leaves out (`snapshot_exclude`).
+- Snapshots need `gpg` and `zstd`; everything else works without them.
+
 ## 0.7.3
 
 - **A bigger window, and the size you leave it at.** The window opened at
