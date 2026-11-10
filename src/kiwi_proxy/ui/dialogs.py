@@ -11,9 +11,10 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
-from .. import dns, endpoint, exits, gateway, paths, podman, providers, secrets  # noqa: E402
+from .. import dns, endpoint, exits, gateway, paths, podman, prefs, providers, secrets  # noqa: E402
 from ..models import DnsConfig, Lease  # noqa: E402
 from . import worker  # noqa: E402
+from .help import explain  # noqa: E402
 
 SOCKS_AUTH = (
     ("inject", "Add the exit's credentials (default)"),
@@ -135,10 +136,12 @@ class ExitEditor(Adw.Dialog):
         page = Adw.PreferencesPage()
 
         # ------------------------------------------------------------ upstream
-        upstream = Adw.PreferencesGroup(
-            title="Upstream",
-            description="Where the traffic leaves: a SOCKS5 you were given, or one a "
-            "provider module produces.",
+        upstream = Adw.PreferencesGroup(title="Upstream", description="Where the traffic leaves")
+        explain(
+            upstream,
+            "A SOCKS5 you were given (user, password, host, port), or one a provider "
+            "module produces: Tor, a VPN, 9proxy, Mysterium.",
+            app="kiwi-proxy",
         )
         self.name_row = Adw.EntryRow(title="Name")
         upstream.add(self.name_row)
@@ -186,10 +189,13 @@ class ExitEditor(Adw.Dialog):
         page.add(upstream)
 
         # ---------------------------------------------------------------- host
-        host = Adw.PreferencesGroup(
-            title="On this computer",
-            description="Offer the exit as a SOCKS5 port, for a browser or any other "
-            "application here. Its traffic still leaves only through the exit.",
+        host = Adw.PreferencesGroup(title="On this computer")
+        explain(
+            host,
+            "Offer the exit as a SOCKS5 port, for a browser or any other application on "
+            "this computer. Its traffic still leaves only through the exit.",
+            app="kiwi-proxy",
+            anchor="exits-for-host-applications",
         )
         self.expose_row = Adw.SwitchRow(title="Offer a SOCKS5 port")
         self.expose_row.connect("notify::active", self._refresh)
@@ -217,25 +223,29 @@ class ExitEditor(Adw.Dialog):
         page.add(host)
 
         # ----------------------------------------------------------------- dns
-        dns_group = Adw.PreferencesGroup(
-            title="DNS and ad-blocking",
-            description="Where names are resolved. Ad-blocking lists are refused either "
-            "way — for containers that join the exit and for socks5h on the SOCKS5 port "
-            "alike.",
+        dns_group = Adw.PreferencesGroup(title="DNS and ad-blocking")
+        explain(
+            dns_group,
+            "Where names are resolved: by the exit itself (what Tor needs for .onion), or "
+            "by a resolver in the gateway that asks a DNS-over-HTTPS service through the "
+            "exit. The ad-blocking lists apply either way, for containers on the exit and "
+            "for socks5h on the SOCKS5 port alike.",
+            app="kiwi-proxy",
+            anchor="dns",
         )
         self._resolve = _resolve_choices()
         self.resolve_row = _combo(
             "Resolve names through",
             [label for _m, _u, label in self._resolve],
-            self._resolve_index("resolver", DnsConfig().upstream),
-            subtitle="the exit itself (.onion, its own DNS), or a resolver run in the gateway",
+            self._resolve_index("resolver", prefs.new_exit_dns().upstream),
+            subtitle="the exit, or a resolver in the gateway",
         )
         dns_group.add(self.resolve_row)
         self.list_rows: dict[str, Adw.SwitchRow] = {}
         for name in dns.BLOCKLISTS:
             title, subtitle = BLOCKLIST_LABELS.get(name, (name, ""))
             row = Adw.SwitchRow(title=title, subtitle=subtitle)
-            row.set_active(name in DnsConfig().blocklists)
+            row.set_active(name in prefs.new_exit_dns().blocklists)
             dns_group.add(row)
             self.list_rows[name] = row
         page.add(dns_group)
@@ -244,7 +254,7 @@ class ExitEditor(Adw.Dialog):
         self.socks_row = _combo(
             "Client credentials",
             [label for _k, label in SOCKS_AUTH],
-            subtitle="Tor Browser keeps a circuit per site only when they pass through",
+            subtitle="pass through for Tor Browser's circuits",
         )
         advanced.add(self.socks_row)
         page.add(advanced)
@@ -466,7 +476,7 @@ class ExitEditor(Adw.Dialog):
         mode, upstream, _label = self._resolve[self.resolve_row.get_selected()]
         dns_cfg = DnsConfig(
             mode=mode,
-            upstream=upstream or DnsConfig().upstream,
+            upstream=upstream or prefs.new_exit_dns().upstream,
             blocklists=[n for n, row in self.list_rows.items() if row.get_active()],
         )
         return {
@@ -572,7 +582,7 @@ class ExitDetails(Adw.Dialog):
         state.add(self.members_row)
         logs_row = Adw.ActionRow(
             title="Container logs",
-            subtitle="whether the provider connected, and any error — the provider and the gateway",
+            subtitle="the provider's and the gateway's",
             use_markup=False,
         )
         logs_row.set_subtitle_lines(0)
@@ -1035,10 +1045,13 @@ class ModulesDialog(Adw.Dialog):
         self._on_configured = on_configured  # (module name) -> None, e.g. a snapshot
         self._setup_buttons: list[Gtk.Button] = []  # disabled together: one build at a time
         page = Adw.PreferencesPage()
-        self.group = Adw.PreferencesGroup(
-            description="Each module turns an upstream — Tor, a VPN, 9proxy, Mysterium — "
-            "into plain SOCKS5 for an exit. Install more with kiwi: "
-            "kiwi install kiwi-plugin-tor (or -vpn, -9proxy, -myst)."
+        self.group = Adw.PreferencesGroup(description="Upstreams that become SOCKS5 exits")
+        explain(
+            self.group,
+            "Each module turns an upstream (Tor, a VPN, 9proxy, Mysterium) into plain "
+            "SOCKS5 for an exit. Install more with kiwi: kiwi install kiwi-plugin-tor "
+            "(or -vpn, -9proxy, -myst).",
+            app="providers",
         )
         page.add(self.group)
         names = providers.discover()

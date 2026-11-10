@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.3
+
+- **Preferences → DNS:** what a new exit starts with, its resolver and whether it
+  blocks ads and trackers; each exit is still changed in its own editor. Used by the
+  app, `kiwi-proxy add` and exits other apps make.
+- **Short texts, the rest behind a (?).** Rows and groups say what they are in a
+  few words; a small (?) opens the explanation and a link to the app's page on
+  kiwi-network.eu. The helper is shared with Kiwi Fox and Kiwi Custodia.
+- The list of exits is wider (up to 920 px), like the other two apps.
+
 ## 0.8.2
 
 - **A dead proxy fails at once.** Bringing up an exit whose proxy did not answer

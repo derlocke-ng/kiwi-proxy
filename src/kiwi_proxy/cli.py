@@ -16,6 +16,7 @@ from . import (
     gateway,
     paths,
     podman,
+    prefs,
     providers,
     secrets,
     snapshots,
@@ -96,7 +97,7 @@ def _exit_dict(ex: Exit) -> dict:
 
 
 def _dns_from_args(a: argparse.Namespace, base: DnsConfig | None = None) -> DnsConfig:
-    cfg = (base or DnsConfig()).model_copy()
+    cfg = (base or prefs.new_exit_dns()).model_copy()
     if getattr(a, "dns", None):
         cfg.mode = a.dns
     if getattr(a, "upstream", None):

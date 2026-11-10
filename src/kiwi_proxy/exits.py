@@ -94,6 +94,12 @@ def make_expose(
     return ex
 
 
+def _new_exit_dns() -> DnsConfig:
+    from . import prefs  # late: prefs imports dns, which may import this module
+
+    return prefs.new_exit_dns()
+
+
 def create(
     name: str,
     endpoint: Endpoint,
@@ -118,7 +124,7 @@ def create(
         name=name,
         created=dt.datetime.now(dt.UTC),
         endpoint=endpoint,
-        dns=dns or DnsConfig(),
+        dns=dns or _new_exit_dns(),
         expose=expose,
         socks_auth=socks_auth or default_socks_auth(endpoint),  # type: ignore[arg-type]
         owner=owner,

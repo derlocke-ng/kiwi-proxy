@@ -13,6 +13,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from .. import dns, exits, gateway, paths, podman, snapshots, storage  # noqa: E402
 from ..snapshots import items as snapshot_items  # noqa: E402
+from . import help as help_ui  # noqa: E402
 from . import snapshots as snapshot_ui  # noqa: E402
 from . import storage as storage_ui  # noqa: E402
 from . import worker  # noqa: E402
@@ -119,10 +120,14 @@ class Window(Adw.ApplicationWindow):
         )
 
         self.page = Adw.PreferencesPage()
-        self.group = Adw.PreferencesGroup(
-            title="Exits",
-            description="Each exit is a sealed gateway: its only route is one upstream. "
-            "Containers join it; with a host port, anything on this computer can use it.",
+        help_ui.widen(self.page)
+        self.group = Adw.PreferencesGroup(title="Exits")
+        help_ui.explain(
+            self.group,
+            "Each exit is a sealed gateway: its only route is one upstream. Containers "
+            "(Kiwi Fox's browsers, Kiwi Custodia's boxes) join it; with a host port, any "
+            "application on this computer can use it.",
+            app="kiwi-proxy",
         )
         self.page.add(self.group)
         self.away_group = Adw.PreferencesGroup(
@@ -133,8 +138,7 @@ class Window(Adw.ApplicationWindow):
         self.empty = Adw.StatusPage(
             icon_name="network-vpn-symbolic",
             title="No exits yet",
-            description="An exit is one upstream — a SOCKS5 you were given, Tor, a VPN, "
-            "9proxy, Mysterium — that browsers, tools and host apps can leave through.",
+            description="One upstream for browsers, boxes and apps to leave through",
         )
         create = Gtk.Button(label="Add an exit", halign=Gtk.Align.CENTER)
         create.add_css_class("suggested-action")
@@ -792,13 +796,15 @@ class Window(Adw.ApplicationWindow):
         self.refresh()
 
     def _open_preferences(self) -> None:
+        from .prefs import DnsPage
+
         page = snapshot_ui.SnapshotsPage(
-            "when you add or change an exit, or configure a module",
+            "after an exit or a module changes",
             on_changed=self._snapshots_changed,
             take_all=snapshot_items.take_all,
-            take_all_text="every exit, with its passwords, and every module's settings",
+            take_all_text="every exit and module",
         )
-        snapshot_ui.preferences_dialog(page).present(self)
+        snapshot_ui.preferences_dialog(DnsPage(), page).present(self)
 
     def _snapshot_all(self) -> None:
         """Every exit and every module's settings, now."""
