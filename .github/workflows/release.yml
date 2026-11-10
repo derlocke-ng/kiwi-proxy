@@ -1,16 +1,25 @@
-# release — a merged version bump publishes itself.
+# release — publishes the GitHub Release for a signed version tag.
 #
-# kiwi installs an app's newest version tag, so a release is exactly the tag
-# v<VERSION> for the VERSION in kiwi.manifest. On every push to main this
-# creates that tag (annotated, message = tag name) when it does not exist yet,
-# and a GitHub Release for it; a push that leaves VERSION alone does nothing.
+# kiwi installs an app's newest version tag, and root on every machine updates
+# a system app without a password only to a tag signed by the key it pinned
+# for that app (kiwi-updater, FIXPLAN-2.4 H4). So the tag IS the release, and
+# a maintainer makes and signs it — never CI, whose token would otherwise be
+# the signing key:
+#
+#     git config gpg.format ssh
+#     git config user.signingkey ~/.ssh/<your release key>
+#     git tag -s v1.2.0 -m v1.2.0 && git push origin v1.2.0
+#
+# This workflow creates no tag and holds no key. For a pushed v* tag it checks
+# that the tag is annotated, signed by a key in .github/allowed_signers, equal
+# to kiwi.manifest's VERSION and newer than every other release, then
+# publishes the release notes. Actions are pinned to full commit SHAs.
 # The same file ships in every kiwi app (kiwi-updater: templates/release.yml);
 # keep the copies identical.
 name: release
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    tags: ['v*']
 
 permissions:
   contents: write
@@ -23,70 +32,76 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          fetch-depth: 0          # every tag, for the exists and older-than checks
-      - name: tag and publish the manifest version
+          fetch-depth: 0          # every tag, for the older-than check
+      - name: check the signed tag and publish its release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           release_re='^v?[0-9]+(\.[0-9]+){0,3}$'   # what kiwi accepts as a release tag
+          if ! grep -qE "$release_re" <<<"$TAG"; then
+              echo "::notice::$TAG is not a release tag kiwi installs — nothing to publish"
+              exit 0
+          fi
+          # the tag object itself, not a lightweight copy of it
+          git fetch --quiet --force origin "refs/tags/$TAG:refs/tags/$TAG"
+
+          if [[ "$(git cat-file -t "refs/tags/$TAG")" != tag ]]; then
+              echo "::error::$TAG is a lightweight tag. Release tags are made with: git tag -s $TAG -m $TAG"
+              exit 1
+          fi
+          if [[ ! -s .github/allowed_signers ]]; then
+              echo "::error::.github/allowed_signers is missing — list the release key(s) in it (ssh-keygen ALLOWED SIGNERS format)"
+              exit 1
+          fi
+          if ! git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=.github/allowed_signers \
+                   verify-tag "$TAG"; then
+              echo "::error::$TAG is not signed by a key in .github/allowed_signers. kiwi would not update to it without a password."
+              exit 1
+          fi
 
           # VERSION read the way kiwi's manifest_get reads it: the first
           # VERSION= line, control characters and trailing whitespace dropped.
           version="$(sed -n 's/^VERSION=//p' kiwi.manifest | head -1 | tr -d '[:cntrl:]' | sed 's/[[:space:]]*$//')"
-          tag="v$version"
-          if ! grep -qE "$release_re" <<<"$tag"; then
-              echo "::error file=kiwi.manifest::VERSION '$version' does not make a tag kiwi installs ($release_re)"
-              exit 1
+          bad=0
+          if [[ ${TAG#v} != "$version" ]]; then
+              echo "::error file=kiwi.manifest::the tag is $TAG, kiwi.manifest says VERSION=$version"
+              bad=1
           fi
-
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-              echo "$tag exists ($(git rev-parse --short "$tag^{commit}")), nothing to tag"
-          else
-              # A tag makes the version public, so everything that repeats it
-              # has to agree first.
-              bad=0
-              if [[ -f pyproject.toml ]]; then
-                  p="$(sed -n 's/^version *= *"\(.*\)"/\1/p' pyproject.toml | head -1)"
-                  if [[ -n $p && $p != "$version" ]]; then
-                      echo "::error file=pyproject.toml::version is $p, kiwi.manifest says $version"
-                      bad=1
-                  fi
-              fi
-              for f in src/*/__init__.py; do
-                  [[ -f $f ]] || continue
-                  p="$(sed -n 's/^__version__ *= *"\(.*\)"/\1/p' "$f" | head -1)"
-                  if [[ -n $p && $p != "$version" ]]; then
-                      echo "::error file=$f::__version__ is $p, kiwi.manifest says $version"
-                      bad=1
-                  fi
-              done
-              if [[ -f tests/check-version.sh ]]; then
-                  bash tests/check-version.sh || bad=1
-              fi
-              # kiwi installs the highest version tag; a lower one would never
-              # reach anybody.
-              latest="$(git tag -l | grep -E "$release_re" | sed 's/^v//' | sort -V | tail -1 || true)"
-              if [[ -n $latest && "$(printf '%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]]; then
-                  echo "::error file=kiwi.manifest::$version is older than the newest release, $latest"
+          # everything else that repeats the version has to agree as well
+          if [[ -f pyproject.toml ]]; then
+              p="$(sed -n 's/^version *= *"\(.*\)"/\1/p' pyproject.toml | head -1)"
+              if [[ -n $p && $p != "$version" ]]; then
+                  echo "::error file=pyproject.toml::version is $p, kiwi.manifest says $version"
                   bad=1
               fi
-              (( bad == 0 )) || exit 1
-
-              git config user.name 'github-actions[bot]'
-              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-              git tag -a "$tag" -m "$tag" HEAD
-              git push origin "refs/tags/$tag"
-              echo "tagged $tag at $(git rev-parse --short HEAD)"
           fi
+          for f in src/*/__init__.py; do
+              [[ -f $f ]] || continue
+              p="$(sed -n 's/^__version__ *= *"\(.*\)"/\1/p' "$f" | head -1)"
+              if [[ -n $p && $p != "$version" ]]; then
+                  echo "::error file=$f::__version__ is $p, kiwi.manifest says $version"
+                  bad=1
+              fi
+          done
+          if [[ -f tests/check-version.sh ]]; then
+              bash tests/check-version.sh || bad=1
+          fi
+          # kiwi installs the highest version tag; a lower one would never
+          # reach anybody.
+          latest="$(git tag -l | grep -E "$release_re" | grep -vxF "$TAG" | sed 's/^v//' | sort -V | tail -1 || true)"
+          if [[ -n $latest && "$(printf '%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]]; then
+              echo "::error::$version is not newer than the newest release, $latest"
+              bad=1
+          fi
+          (( bad == 0 )) || exit 1
 
-          # Also when the tag already existed: a tag made by hand, or by a run
-          # that failed after pushing it, still gets its release.
-          if gh release view "$tag" >/dev/null 2>&1; then
-              echo "release $tag exists"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "release $TAG exists"
               exit 0
           fi
           # Notes: the CHANGELOG.md section headed "## <version>" or
@@ -104,8 +119,8 @@ jobs:
                   on' CHANGELOG.md >"$notes"
           fi
           if grep -q '[^[:space:]]' "$notes"; then
-              gh release create "$tag" --verify-tag --title "$tag" --notes-file "$notes"
+              gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$notes"
           else
-              gh release create "$tag" --verify-tag --title "$tag" --generate-notes
+              gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           fi
-          echo "published release $tag"
+          echo "published release $TAG"

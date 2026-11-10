@@ -1,0 +1,4 @@
+# Keys whose signatures on release tags the release workflow accepts (FIXPLAN-2.4 H4).
+# Format: ssh-keygen(1) ALLOWED SIGNERS. Root on each machine pins its own copy
+# of the key from the first release it installs; this file only gates publishing.
+derlocke-ng namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOgQc/J6GUopStnNbqhY0QM/k5krVteKyWj4e6qyZX+r
