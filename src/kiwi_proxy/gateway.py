@@ -144,7 +144,7 @@ def write_resolver_config(ex: Exit) -> Path | None:
         return None
     dns.merged_blocklist(ex.dns.blocklists)
     cfg = dns.toml_config(
-        ex.dns.upstream,
+        ex.dns.services,
         blocklist=blocklist_in_gateway(ex),
         forwarder="127.0.0.1",
         forwarder_port=FORWARDER_PORT,

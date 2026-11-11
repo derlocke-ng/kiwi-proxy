@@ -61,3 +61,15 @@ def test_toml_sends_queries_through_the_forwarder(monkeypatch):
     assert f"listen_addresses = ['{dns.LISTEN_ADDR}:53']" in cfg
     assert dns.LISTEN_ADDR == "127.0.0.2"  # 127.0.0.1 is pasta's
     assert "blocked_names_file = '/blocklist/blocked-names.txt'" in cfg
+
+
+def test_several_services_and_the_fastest_answers(monkeypatch):
+    stamps = {"quad9-doh-ip4-port443-filter-pri": "sdns://q", "mullvad-doh": "sdns://m"}
+    monkeypatch.setattr(dns, "load_stamps", lambda: stamps)
+    cfg = dns.toml_config(
+        ["quad9", "mullvad", "nope"], blocklist="/b", forwarder="127.0.0.1", forwarder_port=1080
+    )
+    assert "server_names = ['quad9-doh-ip4-port443-filter-pri', 'mullvad-doh']" in cfg
+    assert "lb_strategy = 'first'" in cfg  # always the fastest that answers
+    assert "[static.'mullvad-doh']\nstamp = 'sdns://m'" in cfg
+    assert "[static.'quad9-doh-ip4-port443-filter-pri']\nstamp = 'sdns://q'" in cfg

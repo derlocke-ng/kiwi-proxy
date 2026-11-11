@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.0
+
+**Several DNS services per exit; the fastest that answers.** An exit's resolver
+asked one DNS-over-HTTPS service; when that one did not answer at its start, the
+exit had no names for a while. Now an exit asks any of Quad9, Mullvad, Cloudflare
+and Google you choose, and dnscrypt-proxy uses the fastest of them that answers
+(`lb_strategy = 'first'`); one that is down costs nothing.
+
+- New exits ask all four (Preferences → DNS services). A service chosen there
+  before stays the choice; existing exits keep theirs until you edit them.
+- The exit dialog: Resolve names through (a resolver in the gateway, or the exit
+  itself) and a switch per service. `--upstream quad9,mullvad` on `add`, `set`
+  and `prefs`.
+- `DnsConfig.upstreams` (the list) and `.services`; `upstream` stays the first,
+  for older readers.
+
 ## 0.13.0
 
 - **A host SOCKS5 port on a VPN exit.** `--expose` (Offer a SOCKS5 port in the

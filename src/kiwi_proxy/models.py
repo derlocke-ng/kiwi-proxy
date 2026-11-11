@@ -63,8 +63,15 @@ class DnsConfig(Strict):
     #             there). The forwarder still refuses the blocklists' names, since a
     #             remote-DNS client hands it every name.
     mode: Literal["resolver", "remote"] = "resolver"
-    upstream: str = "google"  # key into dns.UPSTREAMS
+    upstream: str = "google"  # key into dns.UPSTREAMS: the first of `upstreams`
+    # Every DNS-over-HTTPS service the gateway's resolver may ask; it asks the
+    # fastest that answers. Empty: `upstream` alone (exits from before 0.14).
+    upstreams: list[str] = Field(default_factory=list)
     blocklists: list[str] = Field(default_factory=lambda: ["oisd-big"])
+
+    @property
+    def services(self) -> list[str]:
+        return list(self.upstreams) or [self.upstream]
 
 
 class Expose(Strict):

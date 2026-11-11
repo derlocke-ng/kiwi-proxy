@@ -15,7 +15,9 @@ from .models import DnsConfig
 
 @dataclass
 class Prefs:
-    new_exit_upstream: str = dns.DEFAULT_UPSTREAM
+    new_exit_upstream: str = dns.DEFAULT_UPSTREAM  # the first of new_exit_upstreams
+    # The DNS services a new exit asks (the fastest that answers).
+    new_exit_upstreams: list[str] = field(default_factory=lambda: list(dns.SERVICE_ORDER))
     new_exit_blocklists: list[str] = field(default_factory=lambda: list(dns.DEFAULT_BLOCKLISTS))
     # Countries no Tor exit ever leaves through: "" (none), "five", "nine",
     # "fourteen" (the Eyes groups, kiwi_proxy.selection.EYES).
@@ -36,6 +38,11 @@ def load() -> Prefs:
         return Prefs()
     if p.new_exit_upstream not in dns.UPSTREAMS:
         p.new_exit_upstream = dns.DEFAULT_UPSTREAM
+    if "new_exit_upstreams" not in data and p.new_exit_upstream != dns.DEFAULT_UPSTREAM:
+        # Chosen before there were several: that one stays the choice.
+        p.new_exit_upstreams = [p.new_exit_upstream]
+    p.new_exit_upstreams = dns.clean_services(p.new_exit_upstreams) or list(dns.SERVICE_ORDER)
+    p.new_exit_upstream = p.new_exit_upstreams[0]
     p.new_exit_blocklists = [b for b in p.new_exit_blocklists if b in dns.BLOCKLISTS]
     if p.tor_never_group not in ("", "five", "nine", "fourteen"):
         p.tor_never_group = ""
@@ -54,5 +61,8 @@ def new_exit_dns() -> DnsConfig:
     """What a new exit starts with; each exit is changed in its own editor."""
     p = load()
     return DnsConfig(
-        mode="resolver", upstream=p.new_exit_upstream, blocklists=list(p.new_exit_blocklists)
+        mode="resolver",
+        upstream=p.new_exit_upstreams[0],
+        upstreams=list(p.new_exit_upstreams),
+        blocklists=list(p.new_exit_blocklists),
     )

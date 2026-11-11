@@ -46,28 +46,24 @@ _UPSTREAM_LABELS = {
 }
 
 
+SERVICE_HINTS = {"quad9": "blocks malware", "mullvad": "no logs"}
 CONFIG_HINT = "a WireGuard .conf or an OpenVPN .ovpn"
 RENEW_HINT = "uses one IP from your balance"
 
 
-def _resolve_choices() -> list[tuple[str, str | None, str]]:
-    """The one 'resolve through' choice behind DnsConfig's mode + upstream: the
-    exit itself (remote — .onion and the exit's own resolver), or a DoH resolver
-    run in the gateway. Ad-blocking is independent of it and applies either way."""
-    order = ["quad9", "cloudflare", "mullvad", "google"]
-    names = [u for u in order if u in dns.UPSTREAMS] + [
-        u for u in sorted(dns.UPSTREAMS) if u not in order
-    ]
-    return [("remote", None, "The exit itself")] + [
-        ("resolver", u, _UPSTREAM_LABELS.get(u, u.title())) for u in names
-    ]
+RESOLVE_MODES = [("resolver", "A resolver in the gateway"), ("remote", "The exit itself")]
 
 
-def _resolve_label(mode: str, upstream: str | None) -> str:
-    for m, u, label in _resolve_choices():
-        if m == mode and (m == "remote" or u == upstream):
-            return label
-    return "The exit itself" if mode == "remote" else (upstream or "a resolver")
+def service_label(name: str) -> str:
+    return _UPSTREAM_LABELS.get(name, name.title()).split(" · ")[0]
+
+
+def _resolve_label(dns_cfg) -> str:
+    """Where an exit's names resolve, in a few words."""
+    if dns_cfg.mode == "remote":
+        return "the exit itself"
+    names = [service_label(n) for n in dns_cfg.services]
+    return names[0] if len(names) == 1 else f"the fastest of {', '.join(names)}"
 
 
 ANY_COUNTRY = "Any country"
@@ -273,14 +269,17 @@ class ExitEditor(Adw.Dialog):
             app="kiwi-proxy",
             anchor="dns",
         )
-        self._resolve = _resolve_choices()
-        self.resolve_row = _combo(
-            "Resolve names through",
-            [label for _m, _u, label in self._resolve],
-            self._resolve_index("resolver", prefs.new_exit_dns().upstream),
-            subtitle="the exit, or a resolver in the gateway",
-        )
+        self.resolve_row = _combo("Resolve names through", [label for _m, label in RESOLVE_MODES])
+        self.resolve_row.connect("notify::selected", self._refresh)
         dns_group.add(self.resolve_row)
+        # The services the gateway's resolver may ask: it asks the fastest that
+        # answers, so one that is down costs nothing.
+        self.service_rows: dict[str, Adw.SwitchRow] = {}
+        for name in dns.SERVICE_ORDER:
+            row = Adw.SwitchRow(title=service_label(name), subtitle=SERVICE_HINTS.get(name, ""))
+            row.set_active(name in prefs.new_exit_dns().services)
+            dns_group.add(row)
+            self.service_rows[name] = row
         self.list_rows: dict[str, Adw.SwitchRow] = {}
         for name in dns.BLOCKLISTS:
             title, subtitle = BLOCKLIST_LABELS.get(name, (name, ""))
@@ -357,7 +356,9 @@ class ExitEditor(Adw.Dialog):
                 self.password_row.set_title("Password (empty: keep the stored one)")
             elif not ex.expose.loopback:
                 self.open_row.set_active(True)
-        self.resolve_row.set_selected(self._resolve_index(ex.dns.mode, ex.dns.upstream))
+        self.resolve_row.set_selected([m for m, _l in RESOLVE_MODES].index(ex.dns.mode))
+        for name, row in self.service_rows.items():
+            row.set_active(name in ex.dns.services)
         for name, row in self.list_rows.items():
             row.set_active(name in ex.dns.blocklists)
         self.socks_row.set_selected([k for k, _l in SOCKS_AUTH].index(ex.socks_auth))
@@ -430,15 +431,6 @@ class ExitEditor(Adw.Dialog):
 
     def _on_country(self, *_args) -> None:
         pass  # the picker asks the module for the country chosen when it opens
-
-    def _resolve_index(self, mode: str, upstream: str | None) -> int:
-        for i, (m, u, _label) in enumerate(self._resolve):
-            if m == mode and (m == "remote" or u == upstream):
-                return i
-        return next(
-            (i for i, (m, u, _l) in enumerate(self._resolve) if m == "resolver" and u == "google"),
-            0,
-        )
 
     def _set_lease(self, lease_id: str | None, lease: Lease | None = None) -> None:
         """What the picker chose (or the edited exit has): the id kept for the
@@ -515,6 +507,10 @@ class ExitEditor(Adw.Dialog):
             self.name_row.set_text(os.path.splitext(os.path.basename(path))[0])
 
     def _refresh(self, *_args) -> None:
+        if hasattr(self, "service_rows"):
+            in_gateway = RESOLVE_MODES[self.resolve_row.get_selected()][0] == "resolver"
+            for row in self.service_rows.values():
+                row.set_visible(in_gateway)
         exposed = self.expose_row.get_active()
         for row in (self.bind_row, self.port_row, self.auth_row):
             row.set_visible(exposed)
@@ -588,7 +584,10 @@ class ExitEditor(Adw.Dialog):
                     and (not self.ex or other.id != self.ex.id)
                 ):
                     raise ValueError(f"port {expose.port} is already {other.name}'s")
-        mode, upstream, _label = self._resolve[self.resolve_row.get_selected()]
+        mode = RESOLVE_MODES[self.resolve_row.get_selected()][0]
+        services = [n for n, row in self.service_rows.items() if row.get_active()]
+        if mode == "resolver" and not services:
+            raise ValueError("choose at least one DNS service")
         config = None
         if module and providers.takes_config(module):
             kept = self.ex is not None and self.ex.endpoint.module == module
@@ -597,9 +596,11 @@ class ExitEditor(Adw.Dialog):
             if mode != "resolver":
                 raise ValueError("a VPN exit resolves names in its gateway: choose a resolver")
             config = self._config_text
+        services = services or prefs.new_exit_dns().services
         dns_cfg = DnsConfig(
             mode=mode,
-            upstream=upstream or prefs.new_exit_dns().upstream,
+            upstream=services[0],
+            upstreams=services,
             blocklists=[n for n, row in self.list_rows.items() if row.get_active()],
         )
         return {
@@ -753,7 +754,7 @@ class ExitDetails(Adw.Dialog):
             self.renew_button.connect("clicked", self._on_renew)
             self.renew_row.add_suffix(self.renew_button)
             up.add(self.renew_row)
-        up.add(_row("Resolve through", _resolve_label(ex.dns.mode, ex.dns.upstream)))
+        up.add(_row("Resolve through", _resolve_label(ex.dns)))
         lists = ", ".join(BLOCKLIST_LABELS.get(n, (n,))[0].lower() for n in ex.dns.blocklists)
         up.add(_row("Ad-blocking", lists or "off"))
         up.add(_row("Client credentials", dict(SOCKS_AUTH)[ex.socks_auth]))

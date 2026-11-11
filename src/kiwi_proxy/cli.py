@@ -129,14 +129,25 @@ def _exit_dict(ex: Exit) -> dict:
     return d
 
 
+def _services(text: str) -> list[str]:
+    """--upstream quad9,mullvad: the DNS services, each a known one."""
+    names = [n.strip().lower() for n in text.split(",") if n.strip()]
+    unknown = [n for n in names if n not in dns.UPSTREAMS]
+    if unknown or not names:
+        raise ValueError(
+            f"unknown DNS service {', '.join(unknown) or text}; one or more of "
+            f"{', '.join(dns.SERVICE_ORDER)}, comma-separated"
+        )
+    return dns.clean_services(names)
+
+
 def _dns_from_args(a: argparse.Namespace, base: DnsConfig | None = None) -> DnsConfig:
     cfg = (base or prefs.new_exit_dns()).model_copy()
     if getattr(a, "dns", None):
         cfg.mode = a.dns
     if getattr(a, "upstream", None):
-        if a.upstream not in dns.UPSTREAMS:
-            raise ValueError(f"unknown upstream {a.upstream!r}; one of {', '.join(dns.UPSTREAMS)}")
-        cfg.upstream = a.upstream
+        cfg.upstreams = _services(a.upstream)
+        cfg.upstream = cfg.upstreams[0]
     if getattr(a, "no_blocklist", False):
         cfg.blocklists = []
     elif getattr(a, "blocklist", None):
@@ -267,7 +278,8 @@ def cmd_show(a: argparse.Namespace) -> int:
             f"  socks     {ex.socks_auth} (clients' own SOCKS auth goes upstream behind the exit token)"
         )
     adblock = ", ".join(ex.dns.blocklists) if ex.dns.blocklists else "off"
-    _p(f"  dns       {ex.dns.mode} via {ex.dns.upstream} · ad-blocking {adblock}")
+    via = "the exit" if ex.dns.mode == "remote" else ", ".join(ex.dns.services) + " (the fastest)"
+    _p(f"  dns       {ex.dns.mode} via {via} · ad-blocking {adblock}")
     if ex.expose:
         auth = f"user {ex.expose.username}" if ex.expose.username else "no password"
         _p(f"  host      socks5://{ex.expose.address} ({auth})")
@@ -496,9 +508,11 @@ def cmd_prefs(a: argparse.Namespace) -> int:
     p = prefs.load()
     changed = False
     if a.upstream:
-        if a.upstream not in dns.UPSTREAMS:
-            return _fail(f"unknown upstream {a.upstream!r}; one of {', '.join(dns.UPSTREAMS)}")
-        p.new_exit_upstream, changed = a.upstream, True
+        try:
+            p.new_exit_upstreams = _services(a.upstream)
+        except ValueError as exc:
+            return _fail(str(exc))
+        p.new_exit_upstream, changed = p.new_exit_upstreams[0], True
     if a.no_blocklist:
         p.new_exit_blocklists, changed = [], True
     elif a.blocklist:
@@ -512,7 +526,7 @@ def cmd_prefs(a: argparse.Namespace) -> int:
     if changed:
         prefs.save(p)
     group = selection.EYES.get(p.tor_never_group, ())
-    _p(f"new exits resolve through  {p.new_exit_upstream}")
+    _p(f"new exits resolve through  {', '.join(p.new_exit_upstreams)} (the fastest)")
     _p(f"new exits block            {', '.join(p.new_exit_blocklists) or 'nothing'}")
     _p(
         f"no Tor exit leaves through {selection.EYES_TITLES[p.tor_never_group]}"
@@ -1141,7 +1155,10 @@ def _dns_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--dns", choices=("resolver", "remote"), help="resolver in the gateway, or at the proxy"
     )
-    p.add_argument("--upstream", help=f"DoH upstream: {', '.join(dns.UPSTREAMS)}")
+    p.add_argument(
+        "--upstream",
+        help=f"DNS services, comma-separated; the fastest answers: {', '.join(dns.SERVICE_ORDER)}",
+    )
     p.add_argument(
         "--blocklist",
         action="append",
@@ -1244,7 +1261,10 @@ def build_parser() -> argparse.ArgumentParser:
     ny.add_argument("ref")
     ny.set_defaults(func=cmd_nyx)
     pf = sub.add_parser("prefs", help="what new exits start with; the Eyes group Tor never uses")
-    pf.add_argument("--upstream", help=f"new exits resolve through: {', '.join(dns.UPSTREAMS)}")
+    pf.add_argument(
+        "--upstream",
+        help=f"DNS services new exits ask, comma-separated: {', '.join(dns.SERVICE_ORDER)}",
+    )
     pf.add_argument("--blocklist", action="append", help="new exits block these (repeatable)")
     pf.add_argument("--no-blocklist", action="store_true")
     pf.add_argument("--tor-never", choices=("none", "five", "nine", "fourteen"))

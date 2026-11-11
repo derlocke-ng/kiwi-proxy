@@ -106,3 +106,12 @@ def test_socks_auth_flag(capsys):
     assert exits.resolve_ref("tb").socks_auth == "passthrough"
     cli.main(["set", "tb", "--socks-auth", "inject"])
     assert exits.resolve_ref("tb").socks_auth == "inject"
+
+
+def test_an_exit_can_ask_several_dns_services(capsys):
+    assert cli.main(["add", "dns2", "10.64.0.1:1080", "--upstream", "quad9,Mullvad"]) == 0
+    assert exits.find_by_name("dns2").dns.services == ["quad9", "mullvad"]
+    assert cli.main(["add", "dns3", "10.64.0.2:1080", "--upstream", "quad9,nope"]) == 1
+    assert "unknown DNS service nope" in capsys.readouterr().err
+    assert cli.main(["prefs", "--upstream", "cloudflare"]) == 0
+    assert "cloudflare (the fastest)" in capsys.readouterr().out

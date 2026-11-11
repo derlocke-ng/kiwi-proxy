@@ -302,17 +302,23 @@ def test_blocklists_and_resolve_through_are_chosen_per_exit():
     ed.name_row.set_text("x")
     ed.endpoint_row.set_text("10.64.0.1:1080")
     assert ed.collect()["dns"].blocklists == ["oisd-big"]  # the default, ticked
-    # One row for where names resolve, standing in for mode + upstream; the default
-    # is a named resolver (Google), as the CLI's default is.
-    assert ed.collect()["dns"].mode == "resolver" and ed.collect()["dns"].upstream == "google"
+    # A resolver in the gateway with every service by default: the fastest answers.
+    d = ed.collect()["dns"]
+    assert d.mode == "resolver" and d.services == ["quad9", "mullvad", "cloudflare", "google"]
     ed.list_rows["oisd-big"].set_active(False)
     ed.list_rows["oisd-nsfw"].set_active(True)
     assert ed.collect()["dns"].blocklists == ["oisd-nsfw"]
-    ed.resolve_row.set_selected(0)  # the exit itself (remote): .onion, the exit's own DNS
+    ed.service_rows["google"].set_active(False)
+    ed.service_rows["cloudflare"].set_active(False)
+    assert ed.collect()["dns"].services == ["quad9", "mullvad"]
+    for row in ed.service_rows.values():
+        row.set_active(False)
+    with pytest.raises(ValueError, match="at least one DNS service"):
+        ed.collect()
+    ed.resolve_row.set_selected(1)  # the exit itself (remote): .onion, the exit's own DNS
+    _spin(0.2)
     assert ed.collect()["dns"].mode == "remote"
-    quad9 = next(i for i, (m, u, _l) in enumerate(ed._resolve) if u == "quad9")
-    ed.resolve_row.set_selected(quad9)
-    assert ed.collect()["dns"].mode == "resolver" and ed.collect()["dns"].upstream == "quad9"
+    assert not ed.service_rows["quad9"].get_visible()  # nothing to choose then
     assert ed.collect()["dns"].blocklists == ["oisd-nsfw"]  # ad-block applies regardless
 
 

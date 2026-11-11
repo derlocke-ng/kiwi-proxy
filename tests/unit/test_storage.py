@@ -132,13 +132,19 @@ def test_a_new_exit_starts_with_the_dns_preferences():
     from kiwi_proxy.models import Endpoint
 
     plain = exits.create("plain", Endpoint(host="10.64.0.1", port=1080))
-    assert plain.dns.upstream == "google" and plain.dns.blocklists == ["oisd-big"]
-    prefs.save(prefs.Prefs(new_exit_upstream="quad9", new_exit_blocklists=[]))
-    ex = exits.create("q9", Endpoint(host="10.64.0.2", port=1080))
-    assert ex.dns.mode == "resolver" and ex.dns.upstream == "quad9" and ex.dns.blocklists == []
-    # what the file says is checked: an unknown upstream or list falls back
+    # every service: the resolver asks the fastest that answers
+    assert plain.dns.services == ["quad9", "mullvad", "cloudflare", "google"]
+    assert plain.dns.blocklists == ["oisd-big"]
+    prefs.save(prefs.Prefs(new_exit_upstreams=["mullvad", "quad9"], new_exit_blocklists=[]))
+    ex = exits.create("two", Endpoint(host="10.64.0.2", port=1080))
+    assert ex.dns.mode == "resolver" and ex.dns.services == ["mullvad", "quad9"]
+    assert ex.dns.upstream == "mullvad" and ex.dns.blocklists == []
+    # one chosen before there were several stays the choice
+    prefs.path().write_text('{"new_exit_upstream": "quad9"}')
+    assert prefs.new_exit_dns().services == ["quad9"]
+    # what the file says is checked: unknown services or lists fall back
     prefs.path().write_text(
-        '{"new_exit_upstream": "nope", "new_exit_blocklists": ["x", "oisd-small"]}'
+        '{"new_exit_upstreams": ["nope"], "new_exit_blocklists": ["x", "oisd-small"]}'
     )
-    assert prefs.new_exit_dns().upstream == "google"
+    assert prefs.new_exit_dns().services == ["quad9", "mullvad", "cloudflare", "google"]
     assert prefs.new_exit_dns().blocklists == ["oisd-small"]
