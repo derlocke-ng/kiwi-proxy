@@ -18,6 +18,9 @@ MANIFEST = ProviderManifest(name="fakevpn", title="Fake VPN", image="example.com
 class FakeVpn(TunnelProvider):
     manifest = MANIFEST
 
+    def config_server(self, text):
+        return ("vpn.example.org", 51820)
+
     def check_config(self, text):
         if "0.0.0.0/0" not in text:
             raise ProviderError("this config only reaches a subnet; a VPN exit needs a full tunnel")
@@ -48,6 +51,7 @@ def test_add_keeps_the_config_as_the_exits_secret(vpn_module, tmp_path, capsys):
     assert cli.main(["add", "v1", "--module", vpn_module, "--config", str(conf)]) == 0
     ex = exits.find_by_name("v1")
     assert ex.endpoint.lease == ex.id  # a tunnel of its own
+    assert ex.endpoint.label == "fakevpn:vpn.example.org:51820"  # its server, not a bridge address
     assert secrets.lookup(ex.id, kind="vpnconfig") == FULL
     assert ex.dns.mode == "resolver"
     assert "WireGuard · vpn.example.org:51820" in capsys.readouterr().out
@@ -84,3 +88,19 @@ def test_deleting_the_exit_forgets_its_config(vpn_module, tmp_path):
     ex = exits.find_by_name("v5")
     exits.delete(ex.id)
     assert secrets.lookup(ex.id, kind="vpnconfig") is None
+
+
+def test_a_line_says_only_what_the_label_does_not(new_exit):
+    from kiwi_proxy.models import Endpoint
+
+    vpn = exits.create("v", Endpoint(host="94.16.108.143", port=51820, module="vpn"))
+    vpn.endpoint.lease = vpn.id  # its own tunnel: nothing to add
+    assert exits.where(vpn) == "vpn:94.16.108.143:51820"
+    np = exits.create(
+        "n", Endpoint(host="10.89.231.23", port=60001, module="9proxy", lease="60001", country="de")
+    )
+    assert exits.where(np) == "9proxy:10.89.231.23:60001 (DE)"
+    myst = exits.create(
+        "m", Endpoint(host="10.89.231.9", port=1080, module="mysterium", lease="0xabc")
+    )
+    assert exits.where(myst) == "mysterium:10.89.231.9:1080 (0xabc)"

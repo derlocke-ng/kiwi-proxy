@@ -594,8 +594,6 @@ class ExitEditor(Adw.Dialog):
             kept = self.ex is not None and self.ex.endpoint.module == module
             if self._config_text is None and not kept:
                 raise ValueError("choose the VPN's config file")
-            if expose is not None:
-                raise ValueError("a host SOCKS5 port on a VPN exit is not supported yet")
             if mode != "resolver":
                 raise ValueError("a VPN exit resolves names in its gateway: choose a resolver")
             config = self._config_text
@@ -862,8 +860,11 @@ def _noun_of(module: str | None) -> str:
 def provider_line(ex, noun: str) -> str:
     """The details row for a module exit: module, the chosen lease by the module's
     name for it, the country."""
+    if ex.endpoint.lease == ex.id:  # a VPN exit: its own tunnel, nothing to choose
+        return f"{ex.endpoint.module} · its own tunnel"
     chosen = ex.endpoint.lease or "the module's choice"
-    return f"{ex.endpoint.module} · {noun} {chosen} · country {ex.endpoint.country or 'any'}"
+    country = ex.endpoint.country.upper() if ex.endpoint.country else "any"
+    return f"{ex.endpoint.module} · {noun} {chosen} · country {country}"
 
 
 class LeasePicker(Adw.Dialog):

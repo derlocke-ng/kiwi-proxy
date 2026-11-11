@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0
+
+- **A host SOCKS5 port on a VPN exit.** `--expose` (Offer a SOCKS5 port in the
+  app) works on VPN exits too: the port is published on the exit's tunnel, whose
+  namespace the gateway shares, and changing it starts the tunnel again. Checked
+  on the VM: the VM's own requests through the port leave as the VPN's IP.
+  Needs kiwi-plugin-vpn 0.4.0.
+- **VPN exits are labelled by their server** (`vpn:94.16.108.143:51820`), not by
+  an address on the providers bridge.
+- An exit's line says only what its label does not: no VPN exit's own id, no
+  9proxy port twice, and the country in capitals (`9proxy:…:60001 (DE)`).
+
 ## 0.12.0
 
 **9proxy: one daemon, ten exits, a new IP only when you ask.** Needs

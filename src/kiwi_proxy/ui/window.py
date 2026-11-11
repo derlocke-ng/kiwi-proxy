@@ -312,11 +312,10 @@ class Window(Adw.ApplicationWindow):
 
     def _update_row(self, row: Adw.ActionRow, ex) -> None:
         up = ex.id in self._up
-        bits = [ex.endpoint.label]
         if chosen := selection.summary(ex.endpoint):
-            bits[0] += f" ({chosen})"
-        elif ex.endpoint.lease or ex.endpoint.country:
-            bits[0] += f" ({ex.endpoint.lease or ex.endpoint.country})"
+            bits = [f"{ex.endpoint.label} ({chosen})"]
+        else:
+            bits = [exits.where(ex)]
         if ex.expose:
             bits.append(f"host {ex.expose.address}")
         if ex.last_exit:

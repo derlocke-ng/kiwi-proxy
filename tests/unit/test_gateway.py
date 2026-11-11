@@ -728,14 +728,29 @@ def test_a_vpn_exit_joins_its_tunnel_with_no_adapter(new_exit, fake, stamps):
     assert gateway.is_tunnel(ex) and gateway.tunnel_of(ex) == tunnel
 
 
-def test_a_vpn_exit_resolves_itself_and_has_no_host_listener_yet(new_exit, fake):
+def test_a_vpn_exit_resolves_names_itself(new_exit, fake):
     install_vpn_module()
     with pytest.raises(gateway.GatewayError, match="resolves names itself"):
         gateway.up(remote(new_exit, module="fakevpn", lease="x1", port=0), measure=False)
+
+
+def test_a_vpn_exits_host_port_is_on_its_tunnel_not_its_gateway(new_exit, fake, stamps):
+    install_vpn_module()
     ex = new_exit(module="fakevpn", lease="x1", port=0)
     ex.expose = Expose(port=1091)
-    with pytest.raises(gateway.GatewayError, match="host listener"):
-        gateway.up(ex, measure=False)
+    exits.save(ex)
+    gw = gateway.up(ex, measure=False)
+    spec = fake.containers[gw.name]["spec"]
+    assert spec.env["KF_EXPOSE_PORT"] == "1081" and spec.publish == []  # podman: the owner's
+    assert gateway.expose_publish(ex) == "127.0.0.1:1091:1081/tcp"
+    tunnel = paths.provider_container_name("fakevpn", "x1")
+    fake.containers[tunnel]["labels"][paths.EXPOSE_LABEL] = "127.0.0.1:1091"
+    assert gateway.up(ex, measure=False).reused  # the same port: nothing restarts
+    ex.expose = Expose(port=1092)
+    exits.save(ex)
+    again = gateway.up(ex, measure=False)
+    assert any("started again for the host SOCKS5 port" in n for n in again.notes)
+    assert fake.started.count(tunnel) == 2
 
 
 def test_a_gateway_left_in_an_ended_tunnel_is_started_over(new_exit, fake, stamps):

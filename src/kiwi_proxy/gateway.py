@@ -235,8 +235,10 @@ def gateway_spec(
             all_labels[paths.LEASE_LABEL] = lease
     if ex.expose:
         env["KF_EXPOSE_PORT"] = str(EXPOSE_PORT)
-        bind = f"[{ex.expose.bind}]" if ":" in ex.expose.bind else ex.expose.bind
-        publish.append(f"{bind}:{ex.expose.port}:{EXPOSE_PORT}/tcp")
+        # A VPN exit's namespace is its tunnel's: podman publishes the port there
+        # (the module does, see expose_publish), never on a container that joined.
+        if not tunnel:
+            publish.append(expose_publish(ex))
         all_labels[paths.EXPOSE_LABEL] = ex.expose.address
         if ex.expose.username:
             esecret = paths.expose_secret_name(ex.id)
@@ -266,6 +268,13 @@ def gateway_spec(
         userns=None,  # needs container-root to configure its own netns
         labels=all_labels,
     )
+
+
+def expose_publish(ex: Exit) -> str:
+    """The podman --publish for an exit's host SOCKS5 port (the gateway's, or on a
+    VPN exit its tunnel's, whose namespace the gateway shares)."""
+    bind = f"[{ex.expose.bind}]" if ":" in ex.expose.bind else ex.expose.bind
+    return f"{bind}:{ex.expose.port}:{EXPOSE_PORT}/tcp"
 
 
 def config_hash(spec: ContainerSpec, resolver_cfg: Path | None) -> str:
@@ -506,11 +515,16 @@ def up(
             raise GatewayError(
                 f"exit {ex.name!r}: a VPN exit resolves names itself (DNS: resolver)"
             )
-        if ex.expose:
-            raise GatewayError(
-                f"exit {ex.name!r}: a host listener on a VPN exit is not supported yet"
-            )
-        if podman.exists(paths.gateway_name(ex.id)) and not podman.is_running(tunnel):
+        wanted = ex.expose.address if ex.expose else ""
+        if (
+            podman.is_running(tunnel)
+            and podman.labels(tunnel).get(paths.EXPOSE_LABEL, "") != wanted
+        ):
+            # The host port is published on the tunnel, which only a new tunnel
+            # changes: start the exit over.
+            down(ex.id)
+            notes.append("the VPN tunnel was started again for the host SOCKS5 port")
+        elif podman.exists(paths.gateway_name(ex.id)) and not podman.is_running(tunnel):
             # Its namespace was the tunnel's, which is gone: the gateway and its
             # members have no route. A new tunnel is a new namespace; start over.
             down(ex.id)

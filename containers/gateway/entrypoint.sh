@@ -69,7 +69,6 @@ fi
 if [ "$KF_UPSTREAM" = direct ]; then
     # The tunnel's own firewall (gluetun's) allows only the tunnel and its server:
     # it stays as it is, nothing here flushes it.
-    [ -z "$KF_EXPOSE_PORT" ] || die "a host listener on a tunnel exit is not supported yet"
     log "firewall: the tunnel's own (its kill switch); traffic leaves only through the tunnel"
 else
 log "firewall: default drop, permitting only ${KF_ENDPOINT_IP}:${KF_ENDPOINT_PORT}${KF_CONTROL_IP:+ and ${KF_CONTROL_IP}:${KF_CONTROL_PORT:-9052} (Tor control)}"

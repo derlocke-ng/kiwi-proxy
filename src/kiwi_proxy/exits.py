@@ -33,6 +33,19 @@ def valid_name(name: str) -> bool:
     return bool(name.strip()) and "/" not in name and not name.startswith("-") and len(name) <= 64
 
 
+def where(ex: Exit) -> str:
+    """An exit's upstream in one line: its label, and the lease or country when
+    they say something the label does not (not a VPN exit's own id, not a 9proxy
+    port the label already shows)."""
+    out = ex.endpoint.label
+    lease = ex.endpoint.lease
+    if lease and lease != ex.id and not out.endswith(f":{lease}"):
+        return f"{out} ({lease})"
+    if ex.endpoint.country:
+        return f"{out} ({ex.endpoint.country.upper()})"
+    return out
+
+
 def set_config(ex: Exit, text: str) -> str:
     """Give a module exit its own config (a VPN: its WireGuard or OpenVPN file):
     checked by the module, kept whole as the exit's secret, and the exit keyed to
@@ -42,10 +55,16 @@ def set_config(ex: Exit, text: str) -> str:
         raise ExitError(f"exit {ex.name!r} has no module to give a config to")
     summary = providers.check_config(module, text)
     secrets.store(ex.id, text, kind="vpnconfig", label=f"kiwi-proxy {ex.name} config")
-    if ex.endpoint.lease != ex.id:
-        ex.endpoint.lease = ex.id
+    ex.endpoint.lease = ex.id
+    # Labelled by the server the config connects to (vpn:203.0.113.4:51820), not
+    # by an address on the providers bridge that means nothing to anyone.
+    server = getattr(providers.get_provider(module), "config_server", None)
+    found = server(text) if callable(server) else None
+    if found:
+        ex.endpoint.host, ex.endpoint.port = found
+    else:
         ex.endpoint.host = paths.provider_static_ip(module, ex.id)
-        save(ex)
+    save(ex)
     return summary
 
 

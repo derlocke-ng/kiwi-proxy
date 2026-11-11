@@ -118,12 +118,7 @@ def _exit_line(ex: Exit) -> str:
     state = "up" if gateway.is_up(ex.id) else "down"
     expose = f" · host {ex.expose.address}" if ex.expose else ""
     owner = f" · {ex.owner}" if ex.owner else ""
-    where = ex.endpoint.label
-    if ex.endpoint.lease:
-        where += f" ({ex.endpoint.lease})"
-    elif ex.endpoint.country:
-        where += f" ({ex.endpoint.country})"
-    return f"{ex.name:16} {state:4} {where}{expose}{owner}"
+    return f"{ex.name:16} {state:4} {exits.where(ex)}{expose}{owner}"
 
 
 def _exit_dict(ex: Exit) -> dict:
@@ -185,8 +180,6 @@ def cmd_add(a: argparse.Namespace) -> int:
         if getattr(a, "dns", None) and a.dns != "resolver":
             return _fail("a VPN exit resolves names itself: leave --dns out")
         dns_cfg.mode = "resolver"  # whatever Preferences say for new exits
-        if expose is not None:
-            return _fail("a host listener on a VPN exit is not supported yet")
     elif a.module and providers.takes_config(a.module):
         return _fail(
             f"a {a.module} exit needs its config: --config FILE "

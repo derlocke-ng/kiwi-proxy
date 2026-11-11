@@ -258,7 +258,7 @@ def test_the_picker_filters_by_kind_and_search_and_forces_an_id():
     from kiwi_proxy.ui.dialogs import provider_line
 
     ex = exits.create("de", exits.module_endpoint("fakemyst", lease="0xde1", country="de"))
-    assert provider_line(ex, "node") == "fakemyst · node 0xde1 · country de"
+    assert provider_line(ex, "node") == "fakemyst · node 0xde1 · country DE"
 
 
 def test_details_and_modules_build(monkeypatch):
