@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.0
+
+- **VPN configs that ask for a username and password.** `kiwi-proxy add NAME
+  --module vpn --config FILE --login USER` (the password is asked for, or
+  `--login-password-stdin`); in the app, VPN username and password rows appear
+  under Config when the chosen config asks. Needs kiwi-plugin-vpn 0.6.0.
+- The exit dialog names a new exit after a config only once the module takes it.
+
 ## 0.15.0
 
 - **A VPN exit from a connection NetworkManager already has.** `kiwi-proxy add

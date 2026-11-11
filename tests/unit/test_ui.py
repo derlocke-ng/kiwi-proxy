@@ -737,3 +737,23 @@ def test_import_takes_a_networkmanager_connection(monkeypatch):
     _spin(1.0)
     assert ed.config_row.get_subtitle() == "WireGuard · vpn.example.org:51820"
     assert ed.name_row.get_text() == "home-vpn"  # named after the connection
+
+
+def test_a_config_asking_for_a_login_shows_the_rows(tmp_path, monkeypatch):
+    from test_vpn_exits import FULL
+
+    from kiwi_proxy.ui.dialogs import LOGIN_HINT, ExitEditor
+
+    monkeypatch.setenv("KIWI_PROXY_SECRETS", "file")
+    _vpn_module()
+    ed = ExitEditor(None, lambda e: None)
+    ed.source_row.set_selected(1 + ed._modules.index("fakevpn"))
+    _spin()
+    assert not ed.login_user_row.get_visible()
+    ed.use_config_text(FULL + "auth-user-pass\n", "work")
+    assert ed.login_user_row.get_visible() and ed.config_row.get_subtitle() == LOGIN_HINT
+    with pytest.raises(ValueError, match="username and password"):
+        ed.collect()
+    ed.login_user_row.set_text("me")
+    ed.login_password_row.set_text("s3cret")
+    assert ed.collect()["config"].endswith("<auth-user-pass>\nme\ns3cret\n</auth-user-pass>\n")

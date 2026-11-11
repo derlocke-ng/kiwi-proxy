@@ -21,6 +21,13 @@ class FakeVpn(TunnelProvider):
     def config_server(self, text):
         return ("vpn.example.org", 51820)
 
+    def needs_login(self, text):
+        return "auth-user-pass" in text and "<auth-user-pass>" not in text
+
+    def with_login(self, text, user, password):
+        kept = [ln for ln in text.splitlines() if ln.strip() != "auth-user-pass"]
+        return "\\n".join([*kept, "<auth-user-pass>", user, password, "</auth-user-pass>"]) + "\\n"
+
     def config_sources(self, ctx):
         from kiwi_proxy.models import Lease
 
@@ -125,3 +132,17 @@ def test_a_vpn_exit_from_a_networkmanager_connection(vpn_module, capsys):
     assert secrets.lookup(ex.id, kind="vpnconfig").startswith("[Interface]")
     assert cli.main(["add", "x", "--module", vpn_module, "--from", "nope"]) == 1
     assert "no WireGuard or OpenVPN connection 'nope'" in capsys.readouterr().err
+
+
+def test_a_config_asking_for_a_login_takes_it_inline(vpn_module, tmp_path, monkeypatch, capsys):
+    import io
+
+    conf = tmp_path / "login.conf"
+    conf.write_text(FULL + "auth-user-pass\n")
+    assert cli.main(["add", "l0", "--module", vpn_module, "--config", str(conf)]) == 1
+    assert "--login USER" in capsys.readouterr().err
+    monkeypatch.setattr("sys.stdin", io.StringIO("s3cret\n"))
+    args = ["add", "l1", "--module", vpn_module, "--config", str(conf), "--login", "me"]
+    assert cli.main([*args, "--login-password-stdin"]) == 0
+    kept = secrets.lookup(exits.find_by_name("l1").id, kind="vpnconfig")
+    assert kept.endswith("<auth-user-pass>\nme\ns3cret\n</auth-user-pass>\n")

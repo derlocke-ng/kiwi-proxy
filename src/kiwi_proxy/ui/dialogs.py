@@ -49,6 +49,7 @@ _UPSTREAM_LABELS = {
 SERVICE_HINTS = {"quad9": "blocks malware", "mullvad": "no logs"}
 CONFIG_HINT = "a WireGuard .conf or an OpenVPN .ovpn"
 RENEW_HINT = "uses one IP from your balance"
+LOGIN_HINT = "asks for a username and password: below"
 
 
 RESOLVE_MODES = [("resolver", "A resolver in the gateway"), ("remote", "The exit itself")]
@@ -223,6 +224,12 @@ class ExitEditor(Adw.Dialog):
         self.config_row.add_suffix(config_button)
         self.config_row.set_activatable_widget(config_button)
         upstream.add(self.config_row)
+        # A config that asks for a username and password (most providers' OpenVPN).
+        self._config_raw: str | None = None
+        self.login_user_row = Adw.EntryRow(title="VPN username", visible=False)
+        upstream.add(self.login_user_row)
+        self.login_password_row = Adw.PasswordEntryRow(title="VPN password", visible=False)
+        upstream.add(self.login_password_row)
         self.test_row = Adw.ActionRow(
             title="Test the upstream", subtitle="ask what the world sees through it"
         )
@@ -514,15 +521,25 @@ class ExitEditor(Adw.Dialog):
         self.use_config_text(text, os.path.splitext(os.path.basename(path))[0])
 
     def use_config_text(self, text: str, name: str) -> None:
-        try:
-            summary = providers.check_config(self.module, text)
-        except providers.ProviderError as exc:
-            self._config_text = None
-            self.config_row.set_subtitle(str(exc))
-            return
-        self._config_text = text
-        self.config_row.set_subtitle(summary)
-        if not self.name_row.get_text().strip():
+        needs = getattr(providers.get_provider(self.module), "needs_login", None)
+        login = callable(needs) and needs(text)
+        self.login_user_row.set_visible(login)
+        self.login_password_row.set_visible(login)
+        if login:
+            # Checked once the login is there (collect): it goes inline.
+            self._config_raw, self._config_text = text, None
+            self.config_row.set_subtitle(LOGIN_HINT)
+        else:
+            self._config_raw = None
+            try:
+                summary = providers.check_config(self.module, text)
+            except providers.ProviderError as exc:
+                self._config_text = None
+                self.config_row.set_subtitle(str(exc))
+                return
+            self._config_text = text
+            self.config_row.set_subtitle(summary)
+        if not self.name_row.get_text().strip():  # named after a config it takes
             self.name_row.set_text(re.sub(r"[/\s]+", "-", name).strip("-") or name)
 
     def _on_import(self, *_args) -> None:
@@ -616,6 +633,14 @@ class ExitEditor(Adw.Dialog):
         config = None
         if module and providers.takes_config(module):
             kept = self.ex is not None and self.ex.endpoint.module == module
+            if self._config_raw is not None:
+                user = self.login_user_row.get_text().strip()
+                password = self.login_password_row.get_text()
+                if not user or not password:
+                    raise ValueError("give the VPN's username and password")
+                prov = providers.get_provider(module)
+                self._config_text = prov.with_login(self._config_raw, user, password)
+                providers.check_config(module, self._config_text)
             if self._config_text is None and not kept:
                 raise ValueError("choose the VPN's config file")
             if mode != "resolver":

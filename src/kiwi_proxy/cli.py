@@ -114,6 +114,24 @@ def _expose_from_args(a: argparse.Namespace) -> tuple[Expose | None, str | None]
     return ex, password
 
 
+def _with_login(a: argparse.Namespace, text: str) -> str:
+    """A config that asks for a username and password gets them inline: --login
+    USER, the password asked for (or --login-password-stdin)."""
+    prov = providers.get_provider(a.module)
+    needs = getattr(prov, "needs_login", None)
+    if not (callable(needs) and needs(text)):
+        return text
+    if not a.login:
+        raise providers.ProviderError(
+            "this config asks for a username and password: --login USER (asked for the password)"
+        )
+    if a.login_password_stdin:
+        password = sys.stdin.readline().rstrip("\n")
+    else:
+        password = getpass.getpass(f"password for {a.login}: ")
+    return prov.with_login(text, a.login, password)
+
+
 def _exit_line(ex: Exit) -> str:
     state = "up" if gateway.is_up(ex.id) else "down"
     expose = f" · host {ex.expose.address}" if ex.expose else ""
@@ -190,6 +208,7 @@ def cmd_add(a: argparse.Namespace) -> int:
         except providers.ProviderError as exc:
             return _fail(str(exc))
         try:
+            config_text = _with_login(a, config_text)
             providers.check_config(a.module, config_text)
         except providers.ProviderError as exc:
             return _fail(str(exc))
@@ -1130,6 +1149,12 @@ def _snapshot_parser(sub) -> None:
 def _endpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--module", help="a provider module that produces the endpoint (tor, vpn, …)")
     p.add_argument("--lease", help="which of the module's exits (see `module leases`)")
+    p.add_argument(
+        "--login", metavar="USER", help="for a VPN config that asks for a username and password"
+    )
+    p.add_argument(
+        "--login-password-stdin", action="store_true", help="read that password from stdin"
+    )
     p.add_argument(
         "--from",
         dest="from_source",
