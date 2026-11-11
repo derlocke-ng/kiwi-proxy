@@ -24,8 +24,9 @@ from gi.repository import Adw, Gio, Gtk  # noqa: E402
 
 from .. import snapshots  # noqa: E402
 from . import worker  # noqa: E402
+from .help import explain  # noqa: E402
 
-KEYRING_NOTE = "kept in this device's keyring"
+KEYRING_NOTE = "kept in the keyring"
 
 
 def _row(title: str, subtitle: str = "") -> Adw.ActionRow:
@@ -210,10 +211,13 @@ class SnapshotsPage(Adw.PreferencesPage):
         self.folder_row.add_suffix(choose)
         self.device_row = Adw.EntryRow(title="This device is called", show_apply_button=True)
         self.device_row.connect("apply", self._on_device)
-        where = Adw.PreferencesGroup(
-            title="Where",
-            description="One folder for Kiwi Proxy, Kiwi Fox and Kiwi Custodia. Add it to your "
-            "sync client (Nextcloud); a snapshot appears there only when it is complete.",
+        where = Adw.PreferencesGroup(title="Where", description="One folder for all three apps")
+        explain(
+            where,
+            "Kiwi Proxy, Kiwi Fox and Kiwi Custodia share one snapshot folder. Add it to "
+            "your sync client (Nextcloud) to have your exits, profiles and boxes on your "
+            "other devices. A snapshot appears in the folder only when it is complete.",
+            app="kiwi-proxy",
         )
         where.add(self.folder_row)
         where.add(self.device_row)
@@ -223,12 +227,12 @@ class SnapshotsPage(Adw.PreferencesPage):
         self.automatic_row.connect("notify::active", self._on_switch, "automatic")
         self.ask_row = Adw.SwitchRow(
             title="Ask before using an older copy",
-            subtitle="when the folder holds a newer snapshot from another device",
+            subtitle="when another device has a newer one",
         )
         self.ask_row.connect("notify::active", self._on_switch, "ask_older")
         self.keep_row = Adw.SpinRow.new_with_range(1, snapshots.MAX_KEEP, 1)
         self.keep_row.set_title("Keep per item")
-        self.keep_row.set_subtitle("the oldest goes when a new one is made")
+        self.keep_row.set_subtitle("the oldest goes first")
         self.keep_row.connect("notify::value", self._on_keep)
         self.when = Adw.PreferencesGroup(title="When")
         for r in (self.automatic_row, self.ask_row, self.keep_row):
@@ -246,10 +250,13 @@ class SnapshotsPage(Adw.PreferencesPage):
         self.lock_button = _button("Unlock…")
         self.lock_button.connect("clicked", self._on_lock_button)
         self.lock_row.add_suffix(self.lock_button)
-        self.crypt = Adw.PreferencesGroup(
-            title="Encryption",
-            description="Every snapshot is encrypted (gpg, AES-256) before it is written. "
-            "Without the passphrase the files are unreadable, names included.",
+        self.crypt = Adw.PreferencesGroup(title="Encryption", description="gpg, AES-256")
+        explain(
+            self.crypt,
+            "Every snapshot is encrypted before it is written. Without the passphrase the "
+            "files are unreadable, names included. Each device asks for it once and keeps "
+            "it in its keyring.",
+            app="kiwi-proxy",
         )
         self.crypt.add(self.lock_row)
         self.add(self.crypt)
@@ -274,7 +281,7 @@ class SnapshotsPage(Adw.PreferencesPage):
                 self.device_row.set_text("")
             else:
                 self.folder_row.set_subtitle(
-                    s.folder + ("" if st.folder_present else " — not there (not synced yet?)")
+                    s.folder + ("" if st.folder_present else " — not there yet")
                 )
                 self.device_row.set_text(s.device_name)
                 self.automatic_row.set_active(s.automatic)
@@ -283,7 +290,7 @@ class SnapshotsPage(Adw.PreferencesPage):
             for widget in (self.device_row, self.when, self.crypt):
                 widget.set_sensitive(s is not None)
             if s is not None and st.unlocked:
-                self.lock_row.set_subtitle(f"Unlocked on this device — {KEYRING_NOTE}")
+                self.lock_row.set_subtitle(f"Unlocked here, {KEYRING_NOTE}")
                 self.lock_button.set_label("Lock this device")
                 self.lock_button.set_tooltip_text(
                     "Forget the passphrase here; it is asked for again when needed"

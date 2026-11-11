@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1
+
+- **0.9.0 shipped without two files** (the "?" help and the DNS page) and with
+  three others as they were in 0.8.2, so its window and `kiwi-proxy prefs` failed
+  to start. 0.9.1 is 0.9.0 as it was meant to be. Update if you have 0.9.0.
+
 ## 0.9.0
 
 **Where a Tor exit may leave.** Needs kiwi-plugin-tor 0.4.0 for the lists; with an
