@@ -622,7 +622,7 @@ async def control_session(
     host, port, password = upstream
     try:
         up_r, up_w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=10)
-    except (OSError, asyncio.TimeoutError):
+    except (TimeoutError, OSError):
         writer.write(b"551 Tor is not reachable\r\n")
         await shutdown(writer)
         return
