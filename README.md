@@ -59,7 +59,8 @@ check what the world sees through it, see who joined a gateway, set up modules.
 ```
 kiwi-proxy add work socks5://user:pass@host:port   # a plain upstream
 kiwi-proxy add tor-de --module tor --country de     # or one a module produces
-kiwi-proxy add mullvad-se --module vpn --lease Sweden --expose 1081
+kiwi-proxy add home --module vpn --config ~/wg0.conf --expose 1081   # your own VPN
+kiwi-proxy add us-1 --module 9proxy --country us   # a 9proxy residential IP
 kiwi-proxy list
 kiwi-proxy up mullvad-se          # headless: the gateway and nothing else, kept up
 kiwi-proxy check mullvad-se       # what the world sees through it
@@ -102,7 +103,9 @@ stays until `kiwi-proxy down`.
 ### DNS and ad-blocking
 
 By default an exit resolves names in its own gateway (dnscrypt-proxy, DoH through
-the same exit) and refuses names on its blocklists — oisd big unless you pick
+the same exit), asking Quad9, Mullvad, Cloudflare and Google and using the fastest
+that answers — one that is down costs nothing (`--upstream quad9,mullvad` for
+fewer, or the switches in the app). It refuses names on its blocklists — oisd big unless you pick
 others (`--blocklist oisd-small`, `--blocklist oisd-nsfw`, `--no-blocklist`, or the
 switches in the app; Preferences → DNS sets what a new exit starts with). The
 block applies wherever a name shows up:
@@ -120,6 +123,24 @@ ad-blocking holds in both modes, and `--no-blocklist` turns it off. An app using
 plain `socks5://` (no `h`) resolves names itself, outside the exit: use
 `socks5h`. The lists refresh daily (`kiwi-proxy-blocklists.timer`, or
 `kiwi-proxy dns update`); running gateways pick the new list up by themselves.
+
+### VPN exits (TCP and UDP)
+
+`--module vpn --config FILE` takes your WireGuard `.conf` or OpenVPN `.ovpn` (keys
+inside; in the app: Source vpn → Config: Choose…). The exit's own gluetun owns the
+namespace: its firewall is the kill switch, its route the tunnel, and the gateway
+joins it — so a Kiwi Custodia box there sends TCP and UDP through the VPN, and
+nothing leaves when the tunnel is down. A WireGuard config must route `0.0.0.0/0`;
+one key works in one place at a time, so an exit does not start while another is
+up with its key. As many VPN exits as you like, each with its own tunnel.
+
+### 9proxy: one daemon, ten exits
+
+`kiwi-proxy module config 9proxy username=YOU --ask password` once; then each
+`--module 9proxy` exit gets one of the daemon's ten ports, one residential IP each.
+An exit starts on an IP from 9proxy's today's list (no new IP); a new one only when
+you ask — `kiwi-proxy renew EXIT`, or New IP in the exit's details, which says it
+uses one IP from your balance.
 
 ### Tor Browser
 
@@ -149,14 +170,15 @@ hand with gpg.
 
 ## Provider modules
 
-Each module is its own kiwi app and exposes plain SOCKS5; the gateway reaches it
-over a private bridge and still permits exactly one destination.
+Each module is its own kiwi app. Most expose plain SOCKS5, which the gateway reaches
+over a private bridge, permitting exactly one destination; a VPN is a tunnel the
+gateway joins instead.
 
 | Module | Repository | Upstream | Account |
 | --- | --- | --- | --- |
 | `tor` | kiwi-plugin-tor | the Tor network | no |
-| `vpn` | kiwi-plugin-vpn | a WireGuard/OpenVPN tunnel (gluetun) | a VPN subscription |
-| `9proxy` | kiwi-plugin-9proxy | 9proxy residential exits | yes |
+| `vpn` | kiwi-plugin-vpn | your WireGuard/OpenVPN config, TCP and UDP (gluetun) | your VPN |
+| `9proxy` | kiwi-plugin-9proxy | 9proxy residential IPs, ten exits per account | yes |
 | `mysterium` | kiwi-plugin-myst | the Mysterium dVPN | identity (free) |
 
 ```

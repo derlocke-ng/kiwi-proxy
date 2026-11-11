@@ -12,7 +12,7 @@ first-party modules:
 | Module | Repository | Upstream | Account |
 | --- | --- | --- | --- |
 | `tor` | kiwi-plugin-tor | the Tor network | no |
-| `vpn` | kiwi-plugin-vpn | a WireGuard/OpenVPN tunnel (gluetun) | yes (a VPN subscription) |
+| `vpn` | kiwi-plugin-vpn | your WireGuard/OpenVPN config, a tunnel the gateway joins | your VPN |
 | `9proxy` | kiwi-plugin-9proxy | 9proxy residential exits | yes |
 | `mysterium` | kiwi-plugin-myst | the Mysterium dVPN | identity (free) |
 
@@ -25,11 +25,12 @@ share one IP.
 
 ## The one rule
 
-**Every provider exposes SOCKS5 and nothing else.** Adapting its upstream into
-plain SOCKS5 is the module's job, so the gateway, the credential forwarder, the
-single firewall rule and the DNS design stay one shape. A VPN tunnel that only
-offers an HTTP proxy ships a tiny SOCKS5 adapter alongside it; a provider that
-speaks SOCKS5 natively (Tor) needs none.
+**Every provider exposes SOCKS5 — or is a tunnel the gateway joins.** Adapting an
+upstream into plain SOCKS5 is the module's job, so the gateway, the credential
+forwarder, the single firewall rule and the DNS design stay one shape; a provider
+that speaks SOCKS5 natively (Tor) needs nothing. The one exception is a VPN
+(`joins="tunnel"`, below): it carries UDP, which SOCKS5 cannot, so the gateway
+joins the tunnel's namespace instead of connecting to it.
 
 ## How a local provider is wired
 
@@ -229,6 +230,39 @@ module's README says which files. `kiwi-proxy module setup <name>` only builds o
 pulls the module's images. (`ctx.set_secret` / `ctx.secret_mount` exist for a
 module that would rather keep a value as a podman secret; none of the first-party
 modules does.)
+
+### Tunnel modules (`joins="tunnel"`)
+
+A module whose manifest says `joins="tunnel"` (kiwi-plugin-vpn: gluetun, one per
+exit) owns the exit's network namespace. Its container's firewall is the kill
+switch and its route the tunnel; the gateway starts with
+`--network container:<tunnel>` and `KF_UPSTREAM=direct` (no nft flush, the
+forwarder connects targets itself, the resolver rides the tunnel), and members get
+TCP and UDP. A host port (`--expose`) has to be published on the tunnel container
+(podman publishes only on a namespace's owner): `gateway.expose_publish(exit)`
+gives the `--publish`, and the module labels its container with
+`kiwi-proxy.expose` so kiwi-proxy starts the tunnel again when the port changes.
+`gateway.is_tunnel(exit)` tells consumers (Kiwi Custodia leaves its tun2socks out).
+
+### A config file per exit
+
+`check_config(text) -> str` makes a module take one (`--config FILE`, the app's
+Config row): it returns a few words on the file or raises `ProviderError` saying
+why it cannot be an exit. kiwi-proxy keeps the text as the exit's secret (kind
+`vpnconfig`, keyed by the exit, which becomes the lease) and forgets it with the
+exit. `config_server(text) -> (host, port)` labels the exit by its server.
+
+### One container for several leases; leases handed out; new IPs
+
+- `container_for(ctx, lease) -> name`: the container serving a lease, when it is
+  not one per lease (9proxy: one daemon, ten ports). kiwi-proxy asks
+  `providers.container_of` everywhere it looks for a provider's container.
+- `alive(ctx, lease) -> bool`: is the lease served (a 9proxy port still bound to an
+  IP), not only its container running; `providers.lease_alive` and `heal` use it.
+- `assign_lease(ctx, taken) -> lease`: each new exit gets the next free lease (a
+  port); raise `ProviderError` when there is none.
+- `renew(ctx, *, lease, country) -> lines`: a new IP on request (`kiwi-proxy renew`,
+  New IP in the app, which first says it costs one IP).
 
 ## Using it
 
