@@ -45,6 +45,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import socket
 import struct
 import sys
@@ -233,6 +234,12 @@ class Inbound:
         )
 
 
+# Folded client usernames by their hash, so the control filter can give Tor
+# Browser its own username back (see control_unprefix). Bounded: oldest go first.
+FOLDED: dict[str, str] = {}
+FOLDED_MAX = 4096
+
+
 def combine_user(token: str, client_user: str) -> str:
     """The upstream username for a passthrough connection: the exit token,
     then the client's own SOCKS username (Tor Browser's first-party domain),
@@ -243,7 +250,36 @@ def combine_user(token: str, client_user: str) -> str:
     combined = f"{token}:{client_user}"
     if len(combined.encode()) <= 255:
         return combined
-    return f"{token}:#{hashlib.sha256(client_user.encode()).hexdigest()}"
+    digest = hashlib.sha256(client_user.encode()).hexdigest()
+    if digest not in FOLDED:
+        if len(FOLDED) >= FOLDED_MAX:
+            del FOLDED[next(iter(FOLDED))]
+        FOLDED[digest] = client_user
+    return f"{token}:#{digest}"
+
+
+def _quote(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+_FOLDED_FIELD = re.compile(rb'SOCKS_USERNAME="#([0-9a-f]{64})"')
+
+
+def control_unprefix(line: bytes, token: str) -> bytes:
+    """Tor's STREAM and CIRC events and its circuit lists name a passthrough
+    stream's SOCKS username as the gateway sent it: the exit token, then the
+    client's own. Tor Browser looks for its own username there to show a site's
+    circuit, so it gets that back, without the token."""
+    prefix = f'SOCKS_USERNAME="{_quote(token)}:'.encode()
+    if prefix not in line:
+        return line
+    line = line.replace(prefix, b'SOCKS_USERNAME="')
+
+    def unfold(m: re.Match[bytes]) -> bytes:
+        user = FOLDED.get(m.group(1).decode())
+        return f'SOCKS_USERNAME="{_quote(user)}"'.encode() if user is not None else m.group(0)
+
+    return _FOLDED_FIELD.sub(unfold, line)
 
 
 async def _read(reader: asyncio.StreamReader, n: int) -> bytes:
@@ -613,15 +649,47 @@ def control_decide(line: str, socks_port: int) -> tuple[str, str]:
     return "reply", "510 Command filtered\r\n"
 
 
+def control_note(line: str, action: str, out: str) -> str | None:
+    """What the gateway log says about one command: a New Identity, or what the
+    filter refused (the command word, and for GETINFO/GETCONF the keys; never the
+    arguments of anything else, which can carry onion-site keys)."""
+    word, _, rest = line.strip().partition(" ")
+    cmd = word.upper()
+    if action == "pass" and cmd == "SIGNAL" and rest.strip().upper() == "NEWNYM":
+        return "control: new identity (SIGNAL NEWNYM)"
+    if action == "reply" and out[:3] in ("510", "552"):
+        shown = f"{cmd} {rest.strip()}" if cmd in ("GETINFO", "GETCONF") else cmd
+        return f"control: refused {shown[:120]}"
+    return None
+
+
+async def control_relay(src: asyncio.StreamReader, dst: asyncio.StreamWriter, token: str) -> None:
+    """Tor's side of a control session, line by line, with the exit token taken
+    out of SOCKS usernames (control_unprefix)."""
+    try:
+        while line := await src.readline():
+            dst.write(control_unprefix(line, token) if token else line)
+            await dst.drain()
+    except (ConnectionError, asyncio.IncompleteReadError, OSError, ValueError):
+        pass
+    finally:
+        with contextlib.suppress(OSError, NotImplementedError):
+            if dst.can_write_eof():
+                dst.write_eof()
+
+
 async def control_session(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     upstream: tuple[str, int, str],
     socks_port: int,
+    token: str = "",
 ) -> None:
     host, port, password = upstream
     try:
-        up_r, up_w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=10)
+        up_r, up_w = await asyncio.wait_for(
+            asyncio.open_connection(host, port, limit=1 << 20), timeout=10
+        )
     except (TimeoutError, OSError):
         writer.write(b"551 Tor is not reachable\r\n")
         await shutdown(writer)
@@ -635,11 +703,13 @@ async def control_session(
         writer.write(b"515 Authentication failed\r\n")
         await shutdown(writer, up_w)
         return
-    relay = asyncio.create_task(pipe(up_r, writer))
+    relay = asyncio.create_task(control_relay(up_r, writer, token))
     try:
         while line := await reader.readline():
             text = line.decode("utf-8", "replace")
             action, out = control_decide(text, socks_port)
+            if note := control_note(text, action, out):
+                LOG.info("%s", note)
             if action == "reply":
                 writer.write(out.encode())
                 await writer.drain()
@@ -717,7 +787,7 @@ async def main() -> int:
         servers.append(
             await asyncio.start_server(
                 lambda r, w: control_session(
-                    r, w, (control_ip, control_port, password), listen_port
+                    r, w, (control_ip, control_port, password), listen_port, user or ""
                 ),
                 "127.0.0.1",
                 control_listen,

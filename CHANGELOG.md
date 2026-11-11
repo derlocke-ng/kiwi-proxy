@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.1
+
+**Tor Browser's circuit display works.** The gateway puts the exit's token in
+front of Tor Browser's per-site SOCKS username, so Tor's events named a username
+Tor Browser did not know and the circuit display stayed empty. The control filter
+now hands Tor Browser its own username back (long ones folded to a hash too).
+Checked on the VM with the real Tor Browser 16.0: the circuit shows three relays
+with countries; New circuit for this site and New Identity each change the exit.
+
+- The gateway log notes each New Identity and every command the control filter
+  refuses (the command word; for GETINFO/GETCONF the keys, nothing else).
+
 ## 0.10.0
 
 **Tor Browser's control port, filtered.** New Identity, the circuit display and

@@ -639,3 +639,74 @@ def test_remote_mode_still_passes_the_name_through(monkeypatch):
 def test_the_control_filter_lets_through_only_what_tor_browser_needs(line, action, starts):
     got_action, out = fwd.control_decide(line, 1080)
     assert got_action == action and out.startswith(starts), out
+
+
+@pytest.mark.parametrize(
+    ("line", "note"),
+    [
+        ("SIGNAL NEWNYM\r\n", "control: new identity (SIGNAL NEWNYM)"),
+        ("GETINFO config-text\r\n", "control: refused GETINFO config-text"),
+        ("GETCONF HashedControlPassword\r\n", "control: refused GETCONF HashedControlPassword"),
+        ("SETCONF ExitNodes={us}\r\n", "control: refused SETCONF"),
+        ("ADD_ONION ED25519-V3:SECRETKEY Port=80\r\n", "control: refused ADD_ONION"),
+        ("GETINFO version\r\n", None),
+        ("ONION_CLIENT_AUTH_ADD abc.onion x25519:KEY\r\n", None),
+        ('AUTHENTICATE "x"\r\n', None),
+    ],
+)
+def test_the_control_filter_logs_new_identity_and_refusals_without_arguments(line, note):
+    action, out = fwd.control_decide(line, 1080)
+    assert fwd.control_note(line, action, out) == note
+
+
+# ----------------------------------------- Tor Browser's own SOCKS usernames back
+def test_events_name_tor_browsers_own_socks_username_without_the_exit_token():
+    tok = "kf-exit-0123"
+    line = (
+        b'650 STREAM 42 SUCCEEDED 7 1.2.3.4:443 SOCKS_USERNAME="kf-exit-0123:example.com:0" '
+        b'SOCKS_PASSWORD="nonce"\r\n'
+    )
+    assert fwd.control_unprefix(line, tok) == (
+        b'650 STREAM 42 SUCCEEDED 7 1.2.3.4:443 SOCKS_USERNAME="example.com:0" '
+        b'SOCKS_PASSWORD="nonce"\r\n'
+    )
+    circ = b'650 CIRC 7 BUILT $A~a,$B~b,$C~c SOCKS_USERNAME="kf-exit-0123:x.org:0"\r\n'
+    assert b'SOCKS_USERNAME="x.org:0"' in fwd.control_unprefix(circ, tok)
+    other = b'650 STREAM 9 SUCCEEDED 3 1.2.3.4:80 SOCKS_USERNAME="someone-else:a"\r\n'
+    assert fwd.control_unprefix(other, tok) == other
+    assert fwd.control_unprefix(b"250 OK\r\n", tok) == b"250 OK\r\n"
+
+
+def test_a_folded_long_username_comes_back_whole():
+    tok = "kf-exit-0123"
+    long_user = "a" * 250 + '.example"x'
+    sent = fwd.combine_user(tok, long_user)
+    assert sent.startswith(tok + ":#") and len(sent.encode()) <= 255
+    line = f'650 STREAM 1 SUCCEEDED 2 1.2.3.4:443 SOCKS_USERNAME="{sent}"\r\n'.encode()
+    back = fwd.control_unprefix(line, tok)
+    assert back == (
+        b'650 STREAM 1 SUCCEEDED 2 1.2.3.4:443 SOCKS_USERNAME="' + b"a" * 250 + b'.example\\"x"\r\n'
+    )
+
+
+def test_the_control_relay_rewrites_what_tor_sends_line_by_line():
+    async def go():
+        reader = asyncio.StreamReader()
+        reader.feed_data(b'650 STREAM 1 NEW 0 x:443 SOCKS_USERNAME="tok:site:0"\r\n250 OK\r\n')
+        reader.feed_eof()
+        out = bytearray()
+
+        class W:
+            def write(self, b):
+                out.extend(b)
+
+            async def drain(self):
+                pass
+
+            def can_write_eof(self):
+                return False
+
+        await fwd.control_relay(reader, W(), "tok")
+        return bytes(out)
+
+    assert asyncio.run(go()) == b'650 STREAM 1 NEW 0 x:443 SOCKS_USERNAME="site:0"\r\n250 OK\r\n'
