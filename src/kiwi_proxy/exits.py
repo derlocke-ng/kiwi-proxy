@@ -64,9 +64,20 @@ def module_endpoint(module: str, *, lease: str | None, country: str | None) -> E
             f"--country takes a two-letter code, not {country!r}: "
             f"`kiwi-proxy module countries {module}` lists them"
         )
+    prov = providers.get_provider(module)
+    assign = getattr(prov, "assign_lease", None)
+    port = manifest.socks_port
+    if callable(assign):
+        # A module whose leases are handed out (a 9proxy port per exit): the next
+        # free one, unless one was asked for.
+        if not lease:
+            taken = [e.endpoint.lease for e in list_exits() if e.endpoint.module == module]
+            lease = assign(providers.context_for(module, manifest), [t for t in taken if t])
+        if str(lease).isdigit():
+            port = int(lease)
     return Endpoint(
-        host=paths.provider_static_ip(module, lease),
-        port=manifest.socks_port,
+        host=paths.provider_static_ip(module, None if callable(assign) else lease),
+        port=port,
         module=module,
         lease=lease or None,
         country=country.lower() if country else None,

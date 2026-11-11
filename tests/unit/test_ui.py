@@ -689,3 +689,28 @@ def test_the_editor_takes_a_vpn_config_file(tmp_path, monkeypatch):
     ex = exits.find_by_name("home-vpn")
     assert ex is not None and ex.endpoint.lease == ex.id
     assert secrets.lookup(ex.id, kind="vpnconfig") == FULL
+
+
+def test_new_ip_asks_first_and_says_what_came_back(monkeypatch):
+    from test_shared_leases import MODULE_SRC
+
+    from kiwi_proxy import gateway, paths
+    from kiwi_proxy.ui.dialogs import RENEW_HINT, ExitDetails
+
+    mdir = paths.module_dir("fakeports")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(MODULE_SRC)
+    ex = exits.create("us-1", exits.module_endpoint("fakeports", lease=None, country="us"))
+    asked = []
+    monkeypatch.setattr(
+        gateway, "renew", lambda e: (asked.append(e.id), (["a new IP on port 60000"], None))[1]
+    )
+    d = ExitDetails(ex)
+    _spin()
+    assert d.renew_row.get_subtitle() == RENEW_HINT  # it says what it costs
+    d._on_renew_answer(None, "cancel")
+    _spin()
+    assert asked == []
+    d._on_renew_answer(None, "renew")
+    _spin(1.0)
+    assert asked == [ex.id] and d.renew_row.get_subtitle() == "a new IP on port 60000"

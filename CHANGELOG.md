@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.12.0
+
+**9proxy: one daemon, ten exits, a new IP only when you ask.** Needs
+kiwi-plugin-9proxy 0.3.0.
+
+- **A module's container can serve several leases.** `providers.container_of`
+  asks the module which container serves a lease (9proxy: one daemon for its ten
+  ports) and `providers.lease_alive` whether a lease is served (a port still
+  bound to an IP). The gateway's health, repair and logs use them.
+- **Leases handed out.** A module with `assign_lease` gives each new exit the
+  next free one (9proxy: a port, 60000-60009), and an eleventh is refused.
+- **New IP.** `kiwi-proxy renew EXIT`, and New IP in the exit's details, for a
+  module that sells IPs (`renew`). The app asks first and says it uses one IP
+  from the balance; the exit is measured again when it is up.
+- Checked on the VM: Kiwi Fox (Camoufox) on a 0.11 VPN exit loads pages through
+  the VPN.
+
 ## 0.11.0
 
 **VPN exits: TCP and UDP through your own WireGuard or OpenVPN config.** Needs

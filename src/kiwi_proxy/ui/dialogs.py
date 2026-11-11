@@ -47,6 +47,7 @@ _UPSTREAM_LABELS = {
 
 
 CONFIG_HINT = "a WireGuard .conf or an OpenVPN .ovpn"
+RENEW_HINT = "uses one IP from your balance"
 
 
 def _resolve_choices() -> list[tuple[str, str | None, str]]:
@@ -740,12 +741,20 @@ class ExitDetails(Adw.Dialog):
             )
         if ex.last_exit:
             e = ex.last_exit
-            up.add(
-                _row(
-                    "Last seen exit",
-                    f"{e.ip} · {e.country or '?'} {e.city or ''} · {e.seen:%Y-%m-%d %H:%M}",
-                )
+            self.seen_row = _row(
+                "Last seen exit",
+                f"{e.ip} · {e.country or '?'} {e.city or ''} · {e.seen:%Y-%m-%d %H:%M}",
             )
+            up.add(self.seen_row)
+        if gateway.renews(ex):
+            # A module that sells IPs (9proxy): a new one only when asked, and the
+            # asking says what it costs.
+            self.renew_row = Adw.ActionRow(title="New IP", subtitle=RENEW_HINT, use_markup=False)
+            self.renew_row.set_subtitle_lines(0)
+            self.renew_button = Gtk.Button(label="New IP…", valign=Gtk.Align.CENTER)
+            self.renew_button.connect("clicked", self._on_renew)
+            self.renew_row.add_suffix(self.renew_button)
+            up.add(self.renew_row)
         up.add(_row("Resolve through", _resolve_label(ex.dns.mode, ex.dns.upstream)))
         lists = ", ".join(BLOCKLIST_LABELS.get(n, (n,))[0].lower() for n in ex.dns.blocklists)
         up.add(_row("Ad-blocking", lists or "off"))
@@ -776,6 +785,37 @@ class ExitDetails(Adw.Dialog):
         view.set_content(page)
         self.set_child(view)
         self._load_state(name)
+
+    def _on_renew(self, *_args) -> None:
+        dialog = Adw.AlertDialog(
+            heading="A new IP?",
+            body=f"This uses one IP from your {self.ex.endpoint.module} balance.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("renew", "New IP")
+        dialog.set_response_appearance("renew", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+        dialog.connect("response", self._on_renew_answer)
+        dialog.present(self)
+
+    def _on_renew_answer(self, _dialog, response: str) -> None:
+        if response != "renew":
+            return
+        self.renew_button.set_sensitive(False)
+        self.renew_row.set_subtitle("asking…")
+
+        def done(result) -> None:
+            lines, info = result
+            self.renew_button.set_sensitive(True)
+            self.renew_row.set_subtitle(" · ".join(lines[:2]) or "done")
+            if info is not None and self._on_changed:
+                self._on_changed(self.ex)
+
+        def failed(exc: Exception) -> None:
+            self.renew_button.set_sensitive(True)
+            self.renew_row.set_subtitle(str(exc))
+
+        worker.run(lambda: gateway.renew(self.ex), done, failed)
 
     def _load_state(self, name: str) -> None:
         def work():

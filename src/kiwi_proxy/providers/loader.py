@@ -11,7 +11,7 @@ from __future__ import annotations
 import importlib.util
 import re
 
-from .. import paths
+from .. import paths, podman
 from ..models import ProviderManifest
 from .base import Provider, ProviderContext, ProviderError
 
@@ -132,3 +132,22 @@ def check_config(name: str, text: str) -> str:
     if not callable(check):
         raise ProviderError(f"{name} takes no config file")
     return check(text)
+
+
+def container_of(name: str, lease: str | None = None) -> str:
+    """The container that serves a lease: one per lease, unless the module says
+    otherwise (a 9proxy daemon serves every port, every exit, from one)."""
+    prov, manifest = load(name)
+    ctx = context_for(name, manifest)
+    pick = getattr(prov, "container_for", None)
+    return pick(ctx, lease) if callable(pick) else ctx.container_name(lease)
+
+
+def lease_alive(name: str, lease: str | None = None) -> bool:
+    """Is a lease served right now: its container running, and whatever else the
+    module checks (a 9proxy port still bound to an IP)."""
+    prov, manifest = load(name)
+    alive = getattr(prov, "alive", None)
+    if callable(alive):
+        return bool(alive(context_for(name, manifest), lease))
+    return podman.is_running(container_of(name, lease))

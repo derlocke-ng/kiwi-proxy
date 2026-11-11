@@ -219,6 +219,22 @@ def cmd_add(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_renew(a: argparse.Namespace) -> int:
+    ex = exits.resolve_ref(a.ref)
+    if not gateway.renews(ex):
+        return _fail(f"{ex.name}: its module gives no new IPs on request")
+    _p(f"{ex.name}: asking {ex.endpoint.module} for a new IP (this uses one from your balance)")
+    try:
+        lines, info = gateway.renew(ex)
+    except gateway.GatewayError as exc:
+        return _fail(str(exc))
+    for line in lines:
+        _p(f"  {line}")
+    if info:
+        _p(f"  exit      {info.ip} {info.country or ''} {info.city or ''}".rstrip())
+    return 0
+
+
 def cmd_list(a: argparse.Namespace) -> int:
     found = exits.list_exits()
     if a.json:
@@ -477,7 +493,7 @@ def cmd_nyx(a: argparse.Namespace) -> int:
         return _fail(f"{ex.name} is not a Tor exit")
     if not podman.is_running(paths.gateway_name(ex.id)):
         return _fail(f"{ex.name} is not up: kiwi-proxy up {ex.name}")
-    container = paths.provider_container_name(ex.endpoint.module, gateway._provider_lease(ex))
+    container = providers.container_of(ex.endpoint.module, gateway._provider_lease(ex))
     os.execvp("podman", ["podman", "exec", "-it", container, "nyx"])  # noqa: S606, S607
     return 0
 
@@ -1205,6 +1221,12 @@ def build_parser() -> argparse.ArgumentParser:
     dn = sub.add_parser("down", help="tear an exit's gateway down, with whoever joined it")
     dn.add_argument("ref")
     dn.set_defaults(func=cmd_down)
+
+    rn = sub.add_parser(
+        "renew", help="a new IP for an exit whose module sells them (9proxy: uses one IP)"
+    )
+    rn.add_argument("ref")
+    rn.set_defaults(func=cmd_renew)
 
     nm = sub.add_parser("name", help="print the gateway container to join (--network container:)")
     nm.add_argument("ref")

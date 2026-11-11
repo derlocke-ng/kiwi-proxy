@@ -295,7 +295,7 @@ def tunnel_of(ex: Exit) -> str | None:
         return None
     if manifest.joins != "tunnel":
         return None
-    return providers.context_for(module, manifest).container_name(selection.lease_for(ex))
+    return providers.container_of(module, selection.lease_for(ex))
 
 
 def is_tunnel(ex: Exit) -> bool:
@@ -334,7 +334,7 @@ def ensure_provider(ex: Exit) -> EndpointPlan:
     if chosen := selection.summary(ex.endpoint):
         lease += f" ({chosen})"
     if manifest.joins == "tunnel":
-        name = ctx.container_name(selection.lease_for(ex))
+        name = providers.container_of(module, selection.lease_for(ex))
         return EndpointPlan(
             ip="",
             port=0,
@@ -668,6 +668,38 @@ def probe(ex) -> ExitInfo:
         down(ex.id)
 
 
+def renews(ex) -> bool:
+    """Can this exit get a new IP on request (a 9proxy exit)?"""
+    module = ex.endpoint.module
+    if not providers.manages(module):
+        return False
+    try:
+        return callable(getattr(providers.get_provider(module), "renew", None))
+    except providers.ProviderError:
+        return False
+
+
+def renew(ex) -> tuple[list[str], ExitInfo | None]:
+    """A new IP for the exit, from its module (9proxy: one from the balance), then
+    measured through the gateway when it is up. Returns the module's lines."""
+    if not renews(ex):
+        raise GatewayError(f"exit {ex.name!r}: its module gives no new IPs on request")
+    module = ex.endpoint.module
+    prov, manifest = providers.load(module)
+    ctx = providers.context_for(module, manifest)
+    try:
+        lines = list(prov.renew(ctx, lease=_provider_lease(ex), country=ex.endpoint.country))
+    except providers.ProviderError as exc:
+        raise GatewayError(str(exc)) from exc
+    info = None
+    name = paths.gateway_name(ex.id)
+    if podman.is_running(name):
+        with contextlib.suppress(GatewayError):
+            info = measure_exit(name)
+            exits.record_exit(ex, info)
+    return lines, info
+
+
 def _provider_lease(ex) -> str | None:
     """The lease of the provider container behind an exit: what its running
     gateway was started with (a changed selection or Eyes preference only applies
@@ -687,7 +719,7 @@ def provider_alive(ex) -> bool | None:
     module = ex.endpoint.module
     if not providers.manages(module):
         return None
-    return podman.is_running(paths.provider_container_name(module, _provider_lease(ex)))
+    return providers.lease_alive(module, _provider_lease(ex))
 
 
 def exit_logs(ex, lines: int = 200) -> list[tuple[str, str]]:
@@ -704,7 +736,7 @@ def exit_logs(ex, lines: int = 200) -> list[tuple[str, str]]:
             prov, manifest = providers.load(module)
             ctx = providers.context_for(module, manifest)
             for name in (
-                ctx.container_name(_provider_lease(ex)),
+                providers.container_of(module, _provider_lease(ex)),
                 ctx.adapter_name(_provider_lease(ex)),
             ):
                 if podman.exists(name):
@@ -771,7 +803,7 @@ def heal() -> list[str]:
         module = gw["module"]
         if not providers.manages(module):
             continue
-        if podman.is_running(paths.provider_container_name(module, gw["lease"])):
+        if providers.lease_alive(module, gw["lease"]):
             continue
         try:
             ex = exits.load(gw["exit_id"])
@@ -817,7 +849,7 @@ def reconcile() -> list[str]:
             continue
         pinned = podman.container_env(gw["name"], "KF_ENDPOINT_IP")
         current = podman.container_ip(
-            paths.provider_container_name(gw["module"], gw["lease"]), paths.PROVIDERS_NETWORK
+            providers.container_of(gw["module"], gw["lease"]), paths.PROVIDERS_NETWORK
         )
         if pinned and current and pinned != current:
             down(gw["exit_id"])
