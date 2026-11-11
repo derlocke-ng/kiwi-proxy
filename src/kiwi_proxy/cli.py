@@ -19,6 +19,7 @@ from . import (
     prefs,
     providers,
     secrets,
+    selection,
     snapshots,
 )
 from .models import DnsConfig, Exit, Expose
@@ -41,6 +42,41 @@ def _json(payload: object) -> int:
 
 # ------------------------------------------------------------------ helpers
 _endpoint_from_module = exits.module_endpoint
+
+
+def _module_endpoint(module: str, *, lease, country, base=None):
+    """A module endpoint from the command line. For a module that takes several
+    countries (Tor), --country is a list of them and goes to its Only list."""
+    if selection.supports(module):
+        ep = _endpoint_from_module(module, lease=lease, country=None)
+        if base is not None and base.module == module:
+            ep.only_countries = list(base.only_countries) or (
+                [base.country.upper()] if base.country else []
+            )
+            ep.only_nodes = list(base.only_nodes)
+            ep.never_countries = list(base.never_countries)
+        if country is not None:
+            ep.only_countries = list(selection.clean([country]))
+        return ep
+    if country and "," in country:
+        raise ValueError(f"{module} exits in one country at a time")
+    return _endpoint_from_module(module, lease=lease, country=country)
+
+
+def _apply_lists(ep, a) -> None:
+    """--never and --node, for a module that takes them; then check the lot."""
+    never, nodes = getattr(a, "never", None), getattr(a, "node", None)
+    if never is None and nodes is None and not selection.supports(ep.module):
+        return
+    if not selection.supports(ep.module):
+        raise ValueError("--never and --node are for Tor exits (a module that takes them)")
+    if never is not None:
+        ep.never_countries = list(selection.clean([never]))
+    if nodes is not None:
+        ep.only_nodes = list(selection.clean_nodes(nodes))
+    sel = selection.of(ep)
+    if sel and (problems := sel.problems()):
+        raise ValueError("; ".join(problems))
 
 
 def parse_expose(spec: str) -> tuple[str, int]:
@@ -120,10 +156,14 @@ def cmd_add(a: argparse.Namespace) -> int:
         ep, password = endpoint.parse(a.endpoint)
         ep.module, ep.lease, ep.country = a.module, a.lease, a.country
     elif a.module:
-        ep, password = _endpoint_from_module(a.module, lease=a.lease, country=a.country), None
+        try:
+            ep, password = _module_endpoint(a.module, lease=a.lease, country=a.country), None
+        except ValueError as exc:
+            return _fail(str(exc))
     else:
         return _fail("give an ENDPOINT, or --module NAME to have a provider produce one")
     try:
+        _apply_lists(ep, a)
         expose, expose_password = _expose_from_args(a)
         dns_cfg = _dns_from_args(a)
     except ValueError as exc:
@@ -175,9 +215,17 @@ def cmd_show(a: argparse.Namespace) -> int:
         f"  endpoint  {ex.endpoint.label}{' (user ' + ex.endpoint.username + ')' if ex.endpoint.username else ''}"
     )
     if ex.endpoint.module:
-        _p(
-            f"  module    {ex.endpoint.module} lease={ex.endpoint.lease} country={ex.endpoint.country}"
-        )
+        if (sel := selection.of(ex.endpoint)) is not None:
+            _p(f"  module    {ex.endpoint.module}")
+            _p(f"  only      {', '.join([*sel.only_countries, *sel.only_nodes]) or "Tor's choice"}")
+            _p(f"  never     {', '.join(sel.own_never) or '-'}")
+            if group := set(sel.never_countries) - set(sel.own_never):
+                _p(f"  and never {', '.join(sorted(group))} (Preferences, every Tor exit)")
+        else:
+            _p(
+                f"  module    {ex.endpoint.module} lease={ex.endpoint.lease} "
+                f"country={ex.endpoint.country}"
+            )
     if ex.socks_auth != "inject":
         _p(
             f"  socks     {ex.socks_auth} (clients' own SOCKS auth goes upstream behind the exit token)"
@@ -208,13 +256,22 @@ def cmd_set(a: argparse.Namespace) -> int:
         secrets.clear(ex.id, kind="endpoint")
         if password:
             secrets.store(ex.id, password, kind="endpoint")
-    elif a.module or a.lease or a.country:
+    elif a.module or a.lease or a.country is not None or a.never is not None or a.node is not None:
         module = a.module or ex.endpoint.module
         if not module:
-            return _fail("--lease/--country need a module-backed exit (or --module)")
-        ex.endpoint = _endpoint_from_module(
-            module, lease=a.lease or ex.endpoint.lease, country=a.country or ex.endpoint.country
-        )
+            return _fail("--lease/--country/--never/--node need a module-backed exit (or --module)")
+        try:
+            ex.endpoint = _module_endpoint(
+                module,
+                lease=a.lease or ex.endpoint.lease,
+                country=a.country
+                if a.country is not None
+                else (None if selection.supports(module) else ex.endpoint.country),
+                base=ex.endpoint,
+            )
+            _apply_lists(ex.endpoint, a)
+        except ValueError as exc:
+            return _fail(str(exc))
     try:
         if a.no_expose:
             ex.expose = None
@@ -386,6 +443,36 @@ def cmd_reap(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prefs(a: argparse.Namespace) -> int:
+    """What a new exit starts with (DNS), and the Eyes group no Tor exit uses."""
+    p = prefs.load()
+    changed = False
+    if a.upstream:
+        if a.upstream not in dns.UPSTREAMS:
+            return _fail(f"unknown upstream {a.upstream!r}; one of {', '.join(dns.UPSTREAMS)}")
+        p.new_exit_upstream, changed = a.upstream, True
+    if a.no_blocklist:
+        p.new_exit_blocklists, changed = [], True
+    elif a.blocklist:
+        if unknown := [b for b in a.blocklist if b not in dns.BLOCKLISTS]:
+            return _fail(f"unknown blocklist {unknown}; one of {', '.join(dns.BLOCKLISTS)}")
+        p.new_exit_blocklists, changed = list(a.blocklist), True
+    if a.tor_never is not None:
+        p.tor_never_group, changed = ("" if a.tor_never == "none" else a.tor_never), True
+    if changed:
+        prefs.save(p)
+    group = selection.EYES.get(p.tor_never_group, ())
+    _p(f"new exits resolve through  {p.new_exit_upstream}")
+    _p(f"new exits block            {', '.join(p.new_exit_blocklists) or 'nothing'}")
+    _p(
+        f"no Tor exit leaves through {selection.EYES_TITLES[p.tor_never_group]}"
+        + (f" ({', '.join(group)})" if group else "")
+    )
+    if changed and a.tor_never is not None:
+        _p("Tor exits brought up from now on follow it; running ones at their next start")
+    return 0
+
+
 def cmd_storage(a: argparse.Namespace) -> int:
     """Podman's quick storage check; with --repair, remove what is broken."""
     from . import storage
@@ -527,6 +614,36 @@ def cmd_module(a: argparse.Namespace) -> int:
         _p(
             f"{tail} {providers.plural(providers.lease_noun_of(prov), len(leases))}"
             + (" — the picker in the app filters the same way" if len(leases) > 40 else "")
+        )
+        return 0
+    if cmd == "nodes":
+        prov, manifest = providers.load(a.name)
+        ctx = providers.context_for(a.name, manifest)
+        found = list(getattr(prov, "nodes", lambda _c: [])(ctx))
+        if not found:
+            _p(f"{a.name} offers no relays to choose from")
+            return 0
+        blocked = set(selection.blocked_everywhere())
+        want = a.country.upper() if a.country else None
+        text = (a.search or "").lower()
+        shown = [
+            n
+            for n in found
+            if n.country not in blocked
+            and (not want or n.country == want)
+            and (not text or text in f"{n.name} {n.operator} {n.fingerprint}".lower())
+        ]
+        for n in shown[: a.limit]:
+            _p(
+                f"{n.fingerprint}  {n.country}  {n.speed / 1048576:5.0f} MiB/s  {n.name}  {n.operator}"
+            )
+        _p(
+            f"{min(len(shown), a.limit)} of {len(shown)} relays"
+            + (
+                f" (the {len(found) - len(shown)} others are filtered or blocked)"
+                if len(shown) != len(found)
+                else ""
+            )
         )
         return 0
     if cmd == "countries":
@@ -932,7 +1049,17 @@ def _endpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--module", help="a provider module that produces the endpoint (tor, vpn, …)")
     p.add_argument("--lease", help="which of the module's exits (see `module leases`)")
     p.add_argument(
-        "--country", help="two-letter code (kiwi-proxy module countries NAME lists them)"
+        "--country",
+        help="two-letter code (`module countries NAME`); for Tor a list to exit through only: de,se",
+    )
+    p.add_argument(
+        "--never", metavar="CODES", help="Tor: countries never to exit through: hu,tr ('' clears)"
+    )
+    p.add_argument(
+        "--node",
+        action="append",
+        metavar="FINGERPRINT",
+        help="Tor: a relay to exit through only (repeatable, `module nodes tor`; '' clears)",
     )
 
 
@@ -1050,6 +1177,12 @@ def build_parser() -> argparse.ArgumentParser:
     ps.set_defaults(func=cmd_ps)
 
     sub.add_parser("reap", help="tear down gateways nobody uses").set_defaults(func=cmd_reap)
+    pf = sub.add_parser("prefs", help="what new exits start with; the Eyes group Tor never uses")
+    pf.add_argument("--upstream", help=f"new exits resolve through: {', '.join(dns.UPSTREAMS)}")
+    pf.add_argument("--blocklist", action="append", help="new exits block these (repeatable)")
+    pf.add_argument("--no-blocklist", action="store_true")
+    pf.add_argument("--tor-never", choices=("none", "five", "nine", "fourteen"))
+    pf.set_defaults(func=cmd_prefs)
     st = sub.add_parser("storage", help="check podman's storage, repair it, remove leftovers")
     stsub = st.add_subparsers(dest="storage_cmd", required=True)
     stsub.add_parser("check", help="podman system check --quick, with names")
@@ -1090,6 +1223,11 @@ def build_parser() -> argparse.ArgumentParser:
     ml.add_argument("--search", help="any part of an id, a city, an ISP")
     mco = msub.add_parser("countries", help="where a module can exit, with counts where it knows")
     mco.add_argument("name")
+    mno = msub.add_parser("nodes", help="the relays a module can exit through (Tor), fastest first")
+    mno.add_argument("name")
+    mno.add_argument("--country")
+    mno.add_argument("--search", help="part of a name, a network or a fingerprint")
+    mno.add_argument("--limit", type=int, default=40)
     mst = msub.add_parser("settings", help="what a module needs from you, and what it has")
     mst.add_argument("name")
     mcf = msub.add_parser("config", help="give a module its settings (a keystore, a passphrase)")

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.0
+
+**Where a Tor exit may leave.** Needs kiwi-plugin-tor 0.4.0 for the lists; with an
+older Tor module an exit keeps its one country.
+
+- **Only and Never, per exit.** The exit editor's "Exits through" opens the
+  exit's own country list (Only and Never on every row, never both) and its relay
+  list (the running exit relays from the Tor Project's directory, fastest first,
+  searchable by name, network or fingerprint). A country set to Never takes its
+  relays out of the list at once, and the line at the bottom says what Tor will
+  do. On the command line: `--country de,se,ch --never hu,tr --node FINGERPRINT`,
+  and `kiwi-proxy module nodes tor` lists the relays.
+- **Preferences → Tor:** one choice of four, no group or the Five, Nine or
+  Fourteen Eyes, blocked for every Tor exit; their countries are not offered in
+  the lists at all. Each choice says how many exits it leaves.
+  `kiwi-proxy prefs --tor-never nine`.
+- **Each selection runs its own Tor.** Two Tor exits with different countries
+  shared one Tor process before, and with it the first one's country. A Tor
+  container is now keyed by what its exits ask for.
+- An exit made with `--country` before keeps that one country; an exit without
+  lists is written exactly as before, so an older kiwi-proxy still reads it.
+- `kiwi-proxy prefs` shows and sets what new exits start with and the Eyes group.
+
 ## 0.8.3
 
 - **Preferences → DNS:** what a new exit starts with, its resolver and whether it

@@ -124,21 +124,3 @@ def test_repair_removes_only_what_it_is_told(monkeypatch):
 )
 def test_owner(labels, app):
     assert storage.Container("i", "n", "exited", labels).app == app
-
-
-# ------------------------------------------------- new exits (the DNS page)
-def test_a_new_exit_starts_with_the_dns_preferences():
-    from kiwi_proxy import exits, prefs
-    from kiwi_proxy.models import Endpoint
-
-    plain = exits.create("plain", Endpoint(host="10.64.0.1", port=1080))
-    assert plain.dns.upstream == "google" and plain.dns.blocklists == ["oisd-big"]
-    prefs.save(prefs.Prefs(new_exit_upstream="quad9", new_exit_blocklists=[]))
-    ex = exits.create("q9", Endpoint(host="10.64.0.2", port=1080))
-    assert ex.dns.mode == "resolver" and ex.dns.upstream == "quad9" and ex.dns.blocklists == []
-    # what the file says is checked: an unknown upstream or list falls back
-    prefs.path().write_text(
-        '{"new_exit_upstream": "nope", "new_exit_blocklists": ["x", "oisd-small"]}'
-    )
-    assert prefs.new_exit_dns().upstream == "google"
-    assert prefs.new_exit_dns().blocklists == ["oisd-small"]

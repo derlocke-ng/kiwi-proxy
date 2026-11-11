@@ -550,3 +550,97 @@ def test_everything_is_snapshotted_from_the_page_and_the_menu(snapshot_env, tmp_
     win = Window(application=None)
     win.lookup_action("snapshot-all").activate(None)
     _pump(lambda: len(snapshots.history("exit", a.id)) == 2)
+
+
+# ------------------------------------------------------------------- tor lists
+def _tor_module():
+    from test_selection import SELECTING
+
+    from kiwi_proxy import paths, selection
+
+    mdir = paths.module_dir("tor")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(SELECTING)
+    selection._SUPPORTS.clear()
+
+
+def _spin(seconds=0.5):
+    import time
+
+    from gi.repository import GLib
+
+    ctx = GLib.MainContext.default()
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        while ctx.pending():
+            ctx.iteration(False)
+        time.sleep(0.01)
+
+
+def test_the_tor_page_is_one_choice_of_four():
+    from kiwi_proxy import prefs
+    from kiwi_proxy.ui.tor import TorPage
+
+    _tor_module()
+    page = TorPage()
+    _spin()
+    assert list(page._rows) == ["", "five", "nine", "fourteen"]
+    assert "The Five Eyes and Denmark" in page._rows["nine"].get_subtitle()
+    check = page._rows["nine"].get_activatable_widget()
+    check.set_active(True)
+    assert prefs.load().tor_never_group == "nine"
+
+
+def test_the_exit_dialog_links_only_and_never_and_hides_the_group():
+    from kiwi_proxy import prefs
+    from kiwi_proxy.ui.tor import TorExitsDialog
+
+    _tor_module()
+    prefs.save(prefs.Prefs(tor_never_group="five"))
+    got = []
+    dialog = TorExitsDialog(["DE"], [], [], lambda *lists: got.append(lists))
+    _spin()
+    codes = []
+    row = dialog.country_list.get_first_child()
+    while row is not None:
+        codes.append(getattr(row, "code", None))
+        row = row.get_next_sibling()
+    assert "US" not in codes and "SE" in codes and "DE" in codes  # US is in the group
+    # the relay list offers SE's relay, not the group's
+    titles = []
+    row = dialog.node_list.get_first_child()
+    while row is not None:
+        titles.append(row.get_title())
+        row = row.get_next_sibling()
+    assert titles == ["fast"]
+    # Never on SE takes its relay out at once, and Only on SE then clears Never
+    dialog._on_country(Gtk.ToggleButton(active=True), "SE", "never", Gtk.ToggleButton())
+    assert dialog.node_list.get_first_child() is None and "SE" in dialog.never
+    dialog._on_country(Gtk.ToggleButton(active=True), "SE", "only", Gtk.ToggleButton(active=True))
+    assert "SE" not in dialog.never and dialog.node_list.get_first_child() is not None
+    assert "Tor leaves only through: DE, SE." in dialog.summary.get_text()
+    dialog._on_use_clicked()
+    assert got == [(["DE", "SE"], [], [])]
+
+
+def test_the_editor_saves_a_tor_exits_lists():
+    from kiwi_proxy.ui.dialogs import ExitEditor
+
+    _tor_module()
+    ex = exits.create(
+        "research",
+        Endpoint(
+            host="10.89.231.5",
+            port=9050,
+            module="tor",
+            only_countries=["DE"],
+            never_countries=["HU"],
+        ),
+    )
+    ed = ExitEditor(ex, lambda e: None)
+    _spin()
+    assert ed.where_row.get_visible() and not ed.country_row.get_visible()
+    assert ed.where_row.get_subtitle() == "only DE · never HU"
+    ed._only_countries = ["DE", "SE"]
+    ep = ed.collect()["endpoint"]
+    assert ep.only_countries == ["DE", "SE"] and ep.never_countries == ["HU"]

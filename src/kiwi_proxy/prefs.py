@@ -17,6 +17,9 @@ from .models import DnsConfig
 class Prefs:
     new_exit_upstream: str = dns.DEFAULT_UPSTREAM
     new_exit_blocklists: list[str] = field(default_factory=lambda: list(dns.DEFAULT_BLOCKLISTS))
+    # Countries no Tor exit ever leaves through: "" (none), "five", "nine",
+    # "fourteen" (the Eyes groups, kiwi_proxy.selection.EYES).
+    tor_never_group: str = ""
 
 
 def path():
@@ -32,6 +35,8 @@ def load() -> Prefs:
     if p.new_exit_upstream not in dns.UPSTREAMS:
         p.new_exit_upstream = dns.DEFAULT_UPSTREAM
     p.new_exit_blocklists = [b for b in p.new_exit_blocklists if b in dns.BLOCKLISTS]
+    if p.tor_never_group not in ("", "five", "nine", "fourteen"):
+        p.tor_never_group = ""
     return p
 
 

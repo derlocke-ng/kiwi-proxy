@@ -103,6 +103,18 @@ class Setting:
 
 
 @dataclass(frozen=True)
+class Node:
+    """One exit relay a module can be held to (Tor): its fingerprint, nickname,
+    country, the network it is in, and its advertised speed in bytes a second."""
+
+    fingerprint: str
+    name: str
+    country: str
+    operator: str = ""
+    speed: int = 0
+
+
+@dataclass(frozen=True)
 class Country:
     """A country a module can exit in: the code, its name, and how many exits the
     module has there when it knows (Tor relays, Mysterium providers)."""
@@ -250,7 +262,12 @@ class ContainerProvider:
 
     # ------------------------------------------------------------------- lifecycle
     def up(
-        self, ctx: ProviderContext, *, lease: str | None = None, country: str | None = None
+        self,
+        ctx: ProviderContext,
+        *,
+        lease: str | None = None,
+        country: str | None = None,
+        selection=None,
     ) -> Endpoint:
         """Bring the provider up (idempotent) and return its live SOCKS5 endpoint.
 
@@ -262,7 +279,10 @@ class ContainerProvider:
         podman.network_ensure(
             ctx.network, subnet=paths.PROVIDERS_SUBNET, gateway=paths.PROVIDERS_GATEWAY_IP
         )
-        spec = self.container_spec(ctx, lease=lease, country=country)
+        # A selection (kiwi_proxy.selection) only for a module that takes one: an
+        # older module's container_spec has no such argument.
+        extra = {"selection": selection} if selection is not None else {}
+        spec = self.container_spec(ctx, lease=lease, country=country, **extra)
         if spec.network != ctx.network:
             raise ProviderError(
                 f"{self.name}: container_spec must attach to {ctx.network!r}, got {spec.network!r}"

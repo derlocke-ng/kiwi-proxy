@@ -11,7 +11,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from .. import dns, exits, gateway, paths, podman, snapshots, storage  # noqa: E402
+from .. import dns, exits, gateway, paths, podman, selection, snapshots, storage  # noqa: E402
 from ..snapshots import items as snapshot_items  # noqa: E402
 from . import help as help_ui  # noqa: E402
 from . import snapshots as snapshot_ui  # noqa: E402
@@ -310,7 +310,9 @@ class Window(Adw.ApplicationWindow):
     def _update_row(self, row: Adw.ActionRow, ex) -> None:
         up = ex.id in self._up
         bits = [ex.endpoint.label]
-        if ex.endpoint.lease or ex.endpoint.country:
+        if chosen := selection.summary(ex.endpoint):
+            bits[0] += f" ({chosen})"
+        elif ex.endpoint.lease or ex.endpoint.country:
             bits[0] += f" ({ex.endpoint.lease or ex.endpoint.country})"
         if ex.expose:
             bits.append(f"host {ex.expose.address}")
@@ -797,6 +799,7 @@ class Window(Adw.ApplicationWindow):
 
     def _open_preferences(self) -> None:
         from .prefs import DnsPage
+        from .tor import TorPage
 
         page = snapshot_ui.SnapshotsPage(
             "after an exit or a module changes",
@@ -804,7 +807,7 @@ class Window(Adw.ApplicationWindow):
             take_all=snapshot_items.take_all,
             take_all_text="every exit and module",
         )
-        snapshot_ui.preferences_dialog(DnsPage(), page).present(self)
+        snapshot_ui.preferences_dialog(DnsPage(), TorPage(), page).present(self)
 
     def _snapshot_all(self) -> None:
         """Every exit and every module's settings, now."""

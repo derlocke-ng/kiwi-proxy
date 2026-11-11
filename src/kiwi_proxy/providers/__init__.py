@@ -11,6 +11,7 @@ from __future__ import annotations
 from .base import (
     ContainerProvider,
     Country,
+    Node,
     Provider,
     ProviderContext,
     ProviderError,
@@ -32,6 +33,7 @@ from .loader import (
 __all__ = [
     "ContainerProvider",
     "Country",
+    "Node",
     "countries_for",
     "Provider",
     "ProviderContext",

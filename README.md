@@ -104,8 +104,7 @@ stays until `kiwi-proxy down`.
 By default an exit resolves names in its own gateway (dnscrypt-proxy, DoH through
 the same exit) and refuses names on its blocklists — oisd big unless you pick
 others (`--blocklist oisd-small`, `--blocklist oisd-nsfw`, `--no-blocklist`, or the
-switches in the app; Preferences → DNS sets what a new exit starts with). The
-block applies wherever a name shows up:
+switches in the app). The block applies wherever a name shows up:
 
 | Who | How it is blocked |
 | --- | --- |

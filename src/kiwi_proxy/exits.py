@@ -138,8 +138,17 @@ def create(
     return ex
 
 
+# Endpoint fields written only when set, so an older kiwi-proxy (which forbids
+# fields it does not know) still reads an exit that uses none of them.
+_OMIT_EMPTY = ("only_countries", "only_nodes", "never_countries")
+
+
 def save(ex: Exit) -> None:
-    _write_json(paths.exit_dir(ex.id) / "exit.json", ex.model_dump_json(indent=2))
+    data = ex.model_dump(mode="json")
+    for key in _OMIT_EMPTY:
+        if not data["endpoint"].get(key):
+            data["endpoint"].pop(key, None)
+    _write_json(paths.exit_dir(ex.id) / "exit.json", json.dumps(data, indent=2))
 
 
 def load(exit_id: str) -> Exit:

@@ -27,7 +27,7 @@ import hashlib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import dns, endpoint, exits, paths, podman, providers, secrets
+from . import dns, endpoint, exits, paths, podman, providers, secrets, selection
 from .models import ContainerSpec, Exit, ExitInfo, ProviderRecord
 
 FORWARDER_PORT = 1080
@@ -214,8 +214,8 @@ def gateway_spec(
     }
     if ex.endpoint.module and providers.manages(ex.endpoint.module):
         all_labels[paths.MODULE_LABEL] = ex.endpoint.module
-        if ex.endpoint.lease:
-            all_labels[paths.LEASE_LABEL] = ex.endpoint.lease
+        if lease := selection.lease_of(ex.endpoint):
+            all_labels[paths.LEASE_LABEL] = lease
     if ex.expose:
         env["KF_EXPOSE_PORT"] = str(EXPOSE_PORT)
         bind = f"[{ex.expose.bind}]" if ":" in ex.expose.bind else ex.expose.bind
@@ -266,6 +266,19 @@ def config_hash(spec: ContainerSpec, resolver_cfg: Path | None) -> str:
 
 
 # ------------------------------------------------------------------- planning
+def _provider_up(prov, ctx, ex: Exit):
+    """Bring an exit's provider up: with its selection (only, never) for a module
+    that takes one, in a container of its own for that selection."""
+    sel = selection.of(ex.endpoint)
+    if sel is None:
+        return prov.up(ctx, lease=ex.endpoint.lease, country=ex.endpoint.country)
+    if problems := sel.problems():
+        raise providers.ProviderError(f"{ex.name}: " + "; ".join(problems))
+    return prov.up(
+        ctx, lease=selection.lease_of(ex.endpoint), country=ex.endpoint.country, selection=sel
+    )
+
+
 def ensure_provider(ex: Exit) -> EndpointPlan:
     """Bring up a managed provider (idempotent) and return its live SOCKS5 address
     on the providers bridge. The provider's own exit is measured later, through the
@@ -278,10 +291,12 @@ def ensure_provider(ex: Exit) -> EndpointPlan:
         # selected by country at creation is reproduced after a provider teardown
         # (not silently reset to the provider's default, which would contradict
         # whatever a consumer froze for it).
-        live = prov.up(ctx, lease=ex.endpoint.lease, country=ex.endpoint.country)
+        live = _provider_up(prov, ctx, ex)
     except providers.ProviderError as exc:
         raise GatewayError(f"provider {module!r} could not start: {exc}") from exc
     lease = f" (lease {ex.endpoint.lease})" if ex.endpoint.lease else ""
+    if chosen := selection.summary(ex.endpoint):
+        lease += f" ({chosen})"
     return EndpointPlan(
         ip=live.host,
         port=live.port,
@@ -529,7 +544,7 @@ def down(exit_id: str) -> None:
         # may have — so the exit says which provider to let go of.
         ex = exits.load(exit_id)
         if providers.manages(ex.endpoint.module):
-            module, lease = ex.endpoint.module, ex.endpoint.lease
+            module, lease = ex.endpoint.module, selection.lease_of(ex.endpoint)
     if module:
         _release_provider(module, lease, exclude=name)
 
@@ -570,6 +585,18 @@ def probe(ex) -> ExitInfo:
         down(ex.id)
 
 
+def _provider_lease(ex) -> str | None:
+    """The lease of the provider container behind an exit: what its running
+    gateway was started with (a changed selection or Eyes preference only applies
+    at the next start), else what the exit asks for now."""
+    name = paths.gateway_name(ex.id)
+    if podman.exists(name):
+        lab = podman.labels(name)
+        if lab.get(paths.MODULE_LABEL) == ex.endpoint.module:
+            return lab.get(paths.LEASE_LABEL) or None
+    return selection.lease_of(ex.endpoint)
+
+
 def provider_alive(ex) -> bool | None:
     """For a module exit whose gateway is up: is its provider container running?
     None for a plain endpoint (nothing to ask). A Mysterium node that gave up
@@ -577,7 +604,7 @@ def provider_alive(ex) -> bool | None:
     module = ex.endpoint.module
     if not providers.manages(module):
         return None
-    return podman.is_running(paths.provider_container_name(module, ex.endpoint.lease))
+    return podman.is_running(paths.provider_container_name(module, _provider_lease(ex)))
 
 
 def exit_logs(ex, lines: int = 200) -> list[tuple[str, str]]:
@@ -594,8 +621,8 @@ def exit_logs(ex, lines: int = 200) -> list[tuple[str, str]]:
             prov, manifest = providers.load(module)
             ctx = providers.context_for(module, manifest)
             for name in (
-                ctx.container_name(ex.endpoint.lease),
-                ctx.adapter_name(ex.endpoint.lease),
+                ctx.container_name(_provider_lease(ex)),
+                ctx.adapter_name(_provider_lease(ex)),
             ):
                 if podman.exists(name):
                     out.append((name, podman.logs(name, tail=lines)))
@@ -671,8 +698,8 @@ def heal() -> list[str]:
         try:
             prov, manifest = providers.load(module)
             ctx = providers.context_for(module, manifest)
-            prov.down(ctx, lease=ex.endpoint.lease)
-            ep = prov.up(ctx, lease=ex.endpoint.lease, country=ex.endpoint.country)
+            prov.down(ctx, lease=selection.lease_of(ex.endpoint))
+            ep = _provider_up(prov, ctx, ex)
         except providers.ProviderError as exc:
             healed.append(f"{gw['name']}: {exc}")
             continue

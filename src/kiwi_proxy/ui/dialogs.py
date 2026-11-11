@@ -11,7 +11,18 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
-from .. import dns, endpoint, exits, gateway, paths, podman, prefs, providers, secrets  # noqa: E402
+from .. import (  # noqa: E402
+    dns,
+    endpoint,
+    exits,
+    gateway,
+    paths,
+    podman,
+    prefs,
+    providers,
+    secrets,
+    selection,
+)
 from ..models import DnsConfig, Lease  # noqa: E402
 from . import worker  # noqa: E402
 from .help import explain  # noqa: E402
@@ -179,6 +190,18 @@ class ExitEditor(Adw.Dialog):
         )
         self.country_row.connect("notify::selected", self._on_country)
         upstream.add(self.country_row)
+        # A module that takes lists (Tor): Only and Never countries and relays,
+        # chosen in their own dialog instead of the one-country row.
+        self._only_countries: list[str] = []
+        self._only_nodes: list[str] = []
+        self._never_countries: list[str] = []
+        self.where_row = Adw.ActionRow(title="Exits through", use_markup=False, visible=False)
+        self.where_row.set_subtitle_lines(0)
+        where_button = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+        where_button.connect("clicked", self._on_choose_where)
+        self.where_row.add_suffix(where_button)
+        self.where_row.set_activatable_widget(where_button)
+        upstream.add(self.where_row)
         self.test_row = Adw.ActionRow(
             title="Test the upstream", subtitle="ask what the world sees through it"
         )
@@ -301,6 +324,12 @@ class ExitEditor(Adw.Dialog):
             self.endpoint_row.set_text(endpoint_text(ex.endpoint))
         self._want_country = (ex.endpoint.country or "").upper() or None
         self._select_country(self._want_country)
+        self._only_countries = list(ex.endpoint.only_countries) or (
+            [self._want_country] if self._want_country else []
+        )
+        self._only_nodes = list(ex.endpoint.only_nodes)
+        self._never_countries = list(ex.endpoint.never_countries)
+        self._show_where()
         if ex.expose:
             self.expose_row.set_active(True)
             self.bind_row.set_text(ex.expose.bind)
@@ -318,10 +347,13 @@ class ExitEditor(Adw.Dialog):
 
     def _on_source(self, *_args) -> None:
         module = self.module
+        lists = selection.supports(module)
         self.endpoint_row.set_visible(module is None)
-        self.lease_row.set_visible(module is not None)
+        self.lease_row.set_visible(module is not None and not lists)
         self.lease_row.set_title(_noun_of(module).capitalize())
-        self.country_row.set_visible(module is not None)
+        self.country_row.set_visible(module is not None and not lists)
+        self.where_row.set_visible(lists)
+        self._show_where()
         # Another module's exit means nothing here; the edited exit's own is kept.
         own = self.ex.endpoint.lease if self.ex and self.ex.endpoint.module == module else None
         if self._lease != own:
@@ -397,6 +429,29 @@ class ExitEditor(Adw.Dialog):
         else:
             self.lease_row.set_subtitle(lease_line(lease))
 
+    def _show_where(self) -> None:
+        only = [
+            *self._only_countries,
+            *(f"{len(self._only_nodes)} relays",) * bool(self._only_nodes),
+        ]
+        bits = []
+        if only:
+            bits.append("only " + ", ".join(only))
+        if self._never_countries:
+            bits.append("never " + ", ".join(self._never_countries))
+        self.where_row.set_subtitle(" · ".join(bits) or "Tor's choice")
+
+    def _on_choose_where(self, *_args) -> None:
+        from .tor import TorExitsDialog
+
+        def use(only, nodes, never) -> None:
+            self._only_countries, self._only_nodes, self._never_countries = only, nodes, never
+            self._show_where()
+
+        TorExitsDialog(
+            self._only_countries, self._only_nodes, self._never_countries, use, module=self.module
+        ).present(self)
+
     def _copy_lease(self, *_args) -> None:
         if self._lease:
             Gdk.Display.get_default().get_clipboard().set(self._lease)
@@ -435,7 +490,16 @@ class ExitEditor(Adw.Dialog):
         module = self.module
         if module:
             country = self.country.lower() if self.country else None
-            ep = exits.module_endpoint(module, lease=self._lease, country=country)
+            if selection.supports(module):
+                ep = exits.module_endpoint(module, lease=None, country=None)
+                ep.only_countries = list(self._only_countries)
+                ep.only_nodes = list(self._only_nodes)
+                ep.never_countries = list(self._never_countries)
+                sel = selection.of(ep)
+                if sel and (problems := sel.problems()):
+                    raise ValueError("; ".join(problems))
+            else:
+                ep = exits.module_endpoint(module, lease=self._lease, country=country)
         else:
             text = self.endpoint_row.get_text().strip()
             if (

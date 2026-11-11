@@ -33,6 +33,13 @@ class Endpoint(Strict):
     # country), so it is replayed on every bring-up to keep the exit — and anything
     # a consumer froze for it, like a browser fingerprint — coherent.
     country: str | None = None
+    # For a module that takes several (Tor, `exit_selection`): exit only through
+    # these countries (two-letter codes) and relays (fingerprints), and never
+    # through these countries. Written to exit.json only when set, so an older
+    # kiwi-proxy still reads an exit that has none.
+    only_countries: list[str] = Field(default_factory=list)
+    only_nodes: list[str] = Field(default_factory=list)
+    never_countries: list[str] = Field(default_factory=list)
 
     @property
     def label(self) -> str:
