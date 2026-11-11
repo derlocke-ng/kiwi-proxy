@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.2
+
+- **A module's image is rebuilt when the module is newer.** Updating a module
+  left its image as it was until `kiwi-proxy module setup` ran, so a Tor image
+  from before kiwi-plugin-tor 0.4 would have ignored an exit's Only and Never
+  lists and exited anywhere. Images now carry a hash of what they are built from;
+  the first start after an update rebuilds a stale one (about 30 seconds for Tor,
+  once), and a rebuild that fails stops the start instead of using the old image.
+
 ## 0.9.1
 
 - **0.9.0 shipped without two files** (the "?" help and the DNS page) and with

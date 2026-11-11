@@ -185,3 +185,43 @@ def test_a_running_exit_keeps_its_provider_until_it_restarts(monkeypatch):
         podman, "labels", lambda name: {paths.MODULE_LABEL: "tor", paths.LEASE_LABEL: started_with}
     )
     assert gateway.provider_alive(ex) is True
+
+
+def test_a_module_image_older_than_the_module_is_rebuilt_before_a_start(monkeypatch):
+    import subprocess
+
+    from kiwi_proxy import podman
+    from kiwi_proxy.providers import base
+
+    mdir = paths.module_dir("tor")
+    (mdir / "containers").mkdir(parents=True, exist_ok=True)
+    (mdir / "containers" / "Containerfile").write_text("FROM alpine\n")
+    (mdir / "containers" / "entrypoint.sh").write_text("#!/bin/sh\necho new\n")
+    prov, manifest = providers.load("tor")
+    ctx = providers.context_for("tor", manifest)
+    label = {"value": "<no value>"}  # built by an older kiwi-proxy: no source label
+    builds = []
+
+    def run(args, check=True, timeout=120):
+        if args[:2] == ["image", "inspect"]:
+            return subprocess.CompletedProcess(args, 0, label["value"] + "\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def build(image, cf, context, labels=None):
+        builds.append(labels)
+        label["value"] = labels[base.SOURCE_LABEL]
+
+    monkeypatch.setattr(podman, "_run", run)
+    monkeypatch.setattr(podman, "build", build)
+    prov._ensure_current_image(ctx)
+    assert len(builds) == 1 and builds[0][base.SOURCE_LABEL] == base.source_hash(
+        mdir / "containers"
+    )
+    prov._ensure_current_image(ctx)
+    assert len(builds) == 1  # current now: no second build
+    (mdir / "containers" / "entrypoint.sh").write_text("#!/bin/sh\necho newer\n")
+    monkeypatch.setattr(
+        podman, "build", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline"))
+    )
+    with pytest.raises(providers.ProviderError, match="could not be rebuilt"):
+        prov._ensure_current_image(ctx)

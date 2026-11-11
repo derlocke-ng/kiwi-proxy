@@ -27,6 +27,7 @@ The lifecycle labels every container it starts with ``kiwi-proxy.role`` and
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import time
 from dataclasses import dataclass
@@ -186,6 +187,19 @@ class Provider(Protocol):
     def status(self, ctx: ProviderContext) -> ProviderStatus: ...
 
 
+SOURCE_LABEL = "kiwi-proxy.source"
+
+
+def source_hash(directory: Path) -> str:
+    """What a module image is built from: every file under its containers folder,
+    by path and content. A changed entrypoint changes it."""
+    digest = hashlib.sha256()
+    for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+        digest.update(str(path.relative_to(directory)).encode() + b"\0")
+        digest.update(path.read_bytes() + b"\0")
+    return digest.hexdigest()[:16]
+
+
 class ContainerProvider:
     """Base class for a provider that runs a container exposing SOCKS5 on the
     providers bridge. Subclasses declare ``manifest`` and implement
@@ -250,7 +264,11 @@ class ContainerProvider:
                 ctx.image,
                 str(cf),
                 str(cf.parent),
-                labels={"app": paths.APP, paths.MODULE_LABEL: self.name},
+                labels={
+                    "app": paths.APP,
+                    paths.MODULE_LABEL: self.name,
+                    SOURCE_LABEL: source_hash(cf.parent),
+                },
             )
             return
         if self.manifest.image and "/" in self.manifest.image:
@@ -293,6 +311,7 @@ class ContainerProvider:
         spec.restart = spec.restart or "on-failure"
         _label(spec, self.name, lease, role="provider")
         if not podman.is_running(spec.name):
+            self._ensure_current_image(ctx)
             podman.start(spec)
         try:
             ip = self._await_ready(ctx, spec.name)
@@ -310,6 +329,29 @@ class ContainerProvider:
             lease=lease,
             country=country,
         )
+
+    def _ensure_current_image(self, ctx: ProviderContext) -> None:
+        """Rebuild the module's image when the module was updated since it was
+        built: a container from an older image would ignore what a newer module
+        asks of it (a Tor image from before 0.4 ignores the Only and Never lists
+        and exits anywhere). A module with its own setup, or a pulled image, is
+        left alone. A rebuild that fails stops the start: never a stale image."""
+        cf = ctx.containerfile()
+        if not cf.exists() or type(self).setup is not ContainerProvider.setup:
+            return
+        proc = podman._run(
+            ["image", "inspect", "--format", f'{{{{index .Labels "{SOURCE_LABEL}"}}}}', ctx.image],
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip() == source_hash(cf.parent):
+            return
+        try:
+            self.setup(ctx)
+        except Exception as exc:  # noqa: BLE001 - a build, a network
+            raise ProviderError(
+                f"{self.name}: its image is older than the module and could not be rebuilt "
+                f"({exc}); `kiwi-proxy module setup {self.name}`"
+            ) from exc
 
     def _await_ready(self, ctx: ProviderContext, container: str) -> str:
         deadline = time.monotonic() + self.ready_timeout
