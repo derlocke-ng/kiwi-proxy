@@ -180,9 +180,19 @@ def gateway_spec(
     secret = paths.creds_secret_name(ex.id)
     target = f"/run/secrets/{secret}"
     volumes: list[tuple[str, str, str]] = []
+    # A tunnel exit (a VPN): the gateway joins the tunnel's namespace and its
+    # forwarder connects targets itself; the tunnel's firewall is the kill switch.
+    tunnel = network.startswith("container:")
+    upstream = (
+        {"KF_UPSTREAM": "direct"}
+        if tunnel
+        else {
+            "KF_ENDPOINT_IP": endpoint_ip,
+            "KF_ENDPOINT_PORT": str(endpoint_port or ex.endpoint.port),
+        }
+    )
     env = {
-        "KF_ENDPOINT_IP": endpoint_ip,
-        "KF_ENDPOINT_PORT": str(endpoint_port or ex.endpoint.port),
+        **upstream,
         "KF_FORWARDER_PORT": str(FORWARDER_PORT),
         "KF_DNS_MODE": ex.dns.mode,
         "KF_CREDS_FILE": target,
@@ -273,6 +283,27 @@ def config_hash(spec: ContainerSpec, resolver_cfg: Path | None) -> str:
 
 
 # ------------------------------------------------------------------- planning
+def tunnel_of(ex: Exit) -> str | None:
+    """The provider container a tunnel exit's gateway joins (a VPN: gluetun, one
+    per exit), or None for an exit whose gateway connects to a SOCKS5."""
+    module = ex.endpoint.module
+    if not providers.manages(module):
+        return None
+    try:
+        _prov, manifest = providers.load(module)
+    except providers.ProviderError:
+        return None
+    if manifest.joins != "tunnel":
+        return None
+    return providers.context_for(module, manifest).container_name(selection.lease_for(ex))
+
+
+def is_tunnel(ex: Exit) -> bool:
+    """Does this exit's namespace route through a tunnel (TCP and UDP), so a member
+    needs no SOCKS5 to reach anything? Kiwi Custodia leaves its tun2socks out then."""
+    return tunnel_of(ex) is not None
+
+
 def _provider_up(prov, ctx, ex: Exit):
     """Bring an exit's provider up: with its selection (only, never) for a module
     that takes one, in a container of its own for that selection."""
@@ -302,6 +333,15 @@ def ensure_provider(ex: Exit) -> EndpointPlan:
     lease = f" (lease {ex.endpoint.lease})" if ex.endpoint.lease else ""
     if chosen := selection.summary(ex.endpoint):
         lease += f" ({chosen})"
+    if manifest.joins == "tunnel":
+        name = ctx.container_name(selection.lease_for(ex))
+        return EndpointPlan(
+            ip="",
+            port=0,
+            network=f"container:{name}",
+            info=None,
+            notes=[f"provider {module}: tunnel up in {name}{lease}"],
+        )
     return EndpointPlan(
         ip=live.host,
         port=live.port,
@@ -460,8 +500,23 @@ def up(
     """
     if not podman.available():
         raise GatewayError("podman not found")
+    notes: list[str] = []
+    if tunnel := tunnel_of(ex):
+        if ex.dns.mode != "resolver":
+            raise GatewayError(
+                f"exit {ex.name!r}: a VPN exit resolves names itself (DNS: resolver)"
+            )
+        if ex.expose:
+            raise GatewayError(
+                f"exit {ex.name!r}: a host listener on a VPN exit is not supported yet"
+            )
+        if podman.exists(paths.gateway_name(ex.id)) and not podman.is_running(tunnel):
+            # Its namespace was the tunnel's, which is gone: the gateway and its
+            # members have no route. A new tunnel is a new namespace; start over.
+            down(ex.id)
+            notes.append("the VPN tunnel had ended; its gateway was taken down first")
     pl = plan(ex, password, measure=measure)
-    notes = list(pl.notes)
+    notes += pl.notes
     resolver_cfg = write_resolver_config(ex)
     resolv = write_resolv_conf(ex)
     spec = gateway_spec(ex, pl.ip, endpoint_port=pl.port, network=pl.network, labels=labels)
@@ -721,6 +776,12 @@ def heal() -> list[str]:
         try:
             ex = exits.load(gw["exit_id"])
         except exits.ExitError:
+            continue
+        if podman.container_env(gw["name"], "KF_UPSTREAM") == "direct":
+            # A VPN exit: the gateway lived in the tunnel's namespace, which went
+            # with it. Fail closed; the next start brings a new tunnel.
+            down(gw["exit_id"])
+            healed.append(f"{gw['name']}: the VPN tunnel ended; taken down")
             continue
         pinned = podman.container_env(gw["name"], "KF_ENDPOINT_IP")
         try:

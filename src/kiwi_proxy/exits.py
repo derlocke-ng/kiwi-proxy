@@ -33,6 +33,22 @@ def valid_name(name: str) -> bool:
     return bool(name.strip()) and "/" not in name and not name.startswith("-") and len(name) <= 64
 
 
+def set_config(ex: Exit, text: str) -> str:
+    """Give a module exit its own config (a VPN: its WireGuard or OpenVPN file):
+    checked by the module, kept whole as the exit's secret, and the exit keyed to
+    a provider container of its own. Returns the module's few words on it."""
+    module = ex.endpoint.module
+    if not module:
+        raise ExitError(f"exit {ex.name!r} has no module to give a config to")
+    summary = providers.check_config(module, text)
+    secrets.store(ex.id, text, kind="vpnconfig", label=f"kiwi-proxy {ex.name} config")
+    if ex.endpoint.lease != ex.id:
+        ex.endpoint.lease = ex.id
+        ex.endpoint.host = paths.provider_static_ip(module, ex.id)
+        save(ex)
+    return summary
+
+
 def module_endpoint(module: str, *, lease: str | None, country: str | None) -> Endpoint:
     """A module-backed endpoint. Nothing is started: the gateway brings the provider
     up when the exit comes up, on the providers bridge."""

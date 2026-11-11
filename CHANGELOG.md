@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.11.0
+
+**VPN exits: TCP and UDP through your own WireGuard or OpenVPN config.** Needs
+kiwi-plugin-vpn 0.3.0. Checked on the VM with real configs (WireGuard, and OpenVPN
+over TCP): two VPN exits at once, a Kiwi Custodia box sending TCP and UDP through
+its VPN, and nothing getting out with the tunnel down.
+
+- **Tunnel exits.** A module whose manifest says `joins="tunnel"` (a VPN: gluetun,
+  one per exit) owns the exit's network namespace: its firewall is the kill switch
+  and its route the tunnel. The gateway joins it instead of building its own, its
+  forwarder connects targets directly (`KF_UPSTREAM=direct`), and kiwi's DNS and
+  blocklists ride the tunnel. `gateway.is_tunnel(exit)` says which exits these are.
+  If the tunnel's container ends, the exit is taken down (`heal`) or started over
+  (`up`): fail closed.
+- **One config per exit.** `kiwi-proxy add NAME --module vpn --config FILE`, and
+  New exit → Config: Choose… in the app. The module checks the file (a full
+  tunnel, for the internet); it is kept whole as the exit's secret (kind
+  `vpnconfig`) and forgotten with the exit.
+- A VPN exit resolves names in its gateway and has no host SOCKS5 port yet.
+- **Every resolver exit starts sooner.** The gateway's "resolver up" check now asks
+  127.0.0.2 itself. It asked the container's own resolver, which the firewall
+  blocks, so it waited out its 20 s and a first measurement could find no DNS yet.
+
 ## 0.10.1
 
 **Tor Browser's circuit display works.** The gateway puts the exit's token in

@@ -112,3 +112,23 @@ def manages(name: str | None) -> bool:
         return manifest_of(name).runs_container
     except ProviderError:
         return False
+
+
+def takes_config(name: str | None) -> bool:
+    """Does an exit on this module need a config file of its own (a VPN: its
+    WireGuard or OpenVPN config)?"""
+    if not name or not is_installed(name):
+        return False
+    try:
+        return callable(getattr(get_provider(name), "check_config", None))
+    except ProviderError:
+        return False
+
+
+def check_config(name: str, text: str) -> str:
+    """The module's few words on a config ("WireGuard · host:port"), or its
+    ProviderError saying why it cannot be an exit. Nothing is stored or started."""
+    check = getattr(get_provider(name), "check_config", None)
+    if not callable(check):
+        raise ProviderError(f"{name} takes no config file")
+    return check(text)

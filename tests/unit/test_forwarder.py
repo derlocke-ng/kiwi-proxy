@@ -710,3 +710,60 @@ def test_the_control_relay_rewrites_what_tor_sends_line_by_line():
         return bytes(out)
 
     assert asyncio.run(go()) == b'650 STREAM 1 NEW 0 x:443 SOCKS_USERNAME="site:0"\r\n250 OK\r\n'
+
+
+# --------------------------------------------- direct: a tunnel exit (a VPN)
+async def _direct_roundtrip(monkeypatch, *, by_name: bool, answer: str | None = "127.0.0.1"):
+    async def echo(r, w):
+        w.write(b"hello " + await r.read(5))
+        await w.drain()
+        w.close()
+
+    target = await asyncio.start_server(echo, "127.0.0.1", 0)
+    tport = target.sockets[0].getsockname()[1]
+    asked = []
+
+    async def fake_resolve(name, server, timeout=5.0):
+        asked.append((name, server))
+        return answer
+
+    monkeypatch.setattr(fwd, "resolve_a", fake_resolve)
+    up = fwd.Upstream("", 0, None, None, resolver="127.0.0.2", direct=True)
+    server = await asyncio.start_server(lambda r, w: fwd.handle(r, w, up), "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    r, w = await asyncio.open_connection("127.0.0.1", port)
+    w.write(bytes([5, 1, 0]))
+    await w.drain()
+    assert await r.readexactly(2) == bytes([5, 0])
+    if by_name:
+        name = b"svc.example"
+        w.write(bytes([5, 1, 0, 3, len(name)]) + name + struct.pack("!H", tport))
+    else:
+        w.write(bytes([5, 1, 0, 1]) + socket.inet_aton("127.0.0.1") + struct.pack("!H", tport))
+    await w.drain()
+    reply = await r.readexactly(10)
+    body = b""
+    if reply[1] == 0:
+        w.write(b"world")
+        await w.drain()
+        body = await r.read()
+    w.close()
+    server.close()
+    target.close()
+    return reply[1], body, asked
+
+
+def test_direct_mode_connects_the_target_itself_names_through_the_resolver(monkeypatch):
+    rep, body, asked = asyncio.run(_direct_roundtrip(monkeypatch, by_name=True))
+    assert rep == 0 and body == b"hello world"
+    assert asked == [("svc.example", "127.0.0.2")]
+
+
+def test_direct_mode_takes_an_address_as_it_is(monkeypatch):
+    rep, body, asked = asyncio.run(_direct_roundtrip(monkeypatch, by_name=False))
+    assert rep == 0 and body == b"hello world" and asked == []
+
+
+def test_direct_mode_refuses_a_name_the_resolver_does_not_know(monkeypatch):
+    rep, _body, _asked = asyncio.run(_direct_roundtrip(monkeypatch, by_name=True, answer=None))
+    assert rep == fwd.REP_HOST_UNREACH

@@ -21,6 +21,7 @@ from .base import (
     leases_for,
 )
 from .loader import (
+    check_config,
     context_for,
     discover,
     get_provider,
@@ -28,6 +29,7 @@ from .loader import (
     load,
     manages,
     manifest_of,
+    takes_config,
 )
 
 __all__ = [
@@ -41,6 +43,7 @@ __all__ = [
     "Setting",
     "TunnelProvider",
     "leases_for",
+    "check_config",
     "context_for",
     "discover",
     "get_provider",
@@ -48,6 +51,7 @@ __all__ = [
     "load",
     "manages",
     "manifest_of",
+    "takes_config",
 ]
 
 

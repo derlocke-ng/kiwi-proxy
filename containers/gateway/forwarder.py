@@ -203,8 +203,13 @@ class Upstream:
         mode: str = INJECT,
         blocklist: Blocklist | None = None,
         resolver: str | None = None,
+        *,
+        direct: bool = False,
     ) -> None:
         self.host, self.port = host, port
+        # A tunnel exit (a VPN): the namespace's own route is the tunnel, so the
+        # forwarder connects to the target itself instead of through a SOCKS5.
+        self.direct = direct
         self.user, self.password = user or None, password or None
         self.mode = mode
         self.resolver = resolver or None  # names are resolved here to IPv4 when set
@@ -467,6 +472,34 @@ async def handle(
                 await deny(client_w, REP_HOST_UNREACH)
                 return
             atyp, host_bytes = ATYP_IPV4, socket.inet_aton(ip)
+
+        if up.direct:
+            if atyp == ATYP_DOMAIN:
+                # Names are resolved here (the exit's resolver), never by the system.
+                ip = await resolve_a(host, up.resolver) if up.resolver else None
+                if ip is None:
+                    await deny(client_w, REP_HOST_UNREACH)
+                    return
+                target = ip
+            elif atyp == ATYP_IPV6:
+                target = socket.inet_ntop(socket.AF_INET6, host_bytes)
+            else:
+                target = socket.inet_ntoa(host_bytes)
+            try:
+                up_r, up_w = await asyncio.wait_for(
+                    asyncio.open_connection(target, port), timeout=20
+                )
+            except (TimeoutError, OSError) as exc:
+                LOG.info("%s:%s unreachable through the tunnel: %s", host, port, exc)
+                await deny(client_w, REP_HOST_UNREACH)
+                return
+            client_w.write(bytes([VER, REP_OK, 0x00, ATYP_IPV4]) + b"\x00\x00\x00\x00\x00\x00")
+            await client_w.drain()
+            try:
+                await asyncio.gather(pipe(client_r, up_w), pipe(up_r, client_w))
+            finally:
+                await shutdown(up_w, client_w)
+            return
 
         try:
             up_r, up_w = await asyncio.wait_for(
@@ -733,7 +766,8 @@ async def main() -> int:
     creds = os.environ.get("KF_CREDS_FILE", "/run/kf/endpoint.creds")
     mode = os.environ.get("KF_SOCKS_AUTH", INJECT)
     expose_port = int(os.environ.get("KF_EXPOSE_PORT", "") or 0)
-    if not host or not port:
+    direct = os.environ.get("KF_UPSTREAM") == "direct"
+    if not direct and (not host or not port):
         LOG.error("KF_ENDPOINT_IP and KF_ENDPOINT_PORT are required")
         return 2
     if mode not in (INJECT, PASSTHROUGH):
@@ -752,14 +786,16 @@ async def main() -> int:
         return 2
     blocklist = Blocklist(os.environ["KF_BLOCKLIST"]) if os.environ.get("KF_BLOCKLIST") else None
     resolver = os.environ.get("KF_RESOLVER") or None  # set in resolver mode: names -> IPv4 here
-    up = Upstream(host, port, user, password, mode, blocklist, resolver=resolver)
+    up = Upstream(
+        host or "", port, user, password, mode, blocklist, resolver=resolver, direct=direct
+    )
     server = await asyncio.start_server(
         lambda r, w: handle(r, w, up), "127.0.0.1", listen_port, reuse_address=True
     )
     LOG.info(
         "listening on 127.0.0.1:%s -> %s:%s (%s, %s)",
         listen_port,
-        host,
+        host or "the tunnel",
         port,
         "authenticated" if up.authed else "no auth",
         mode,

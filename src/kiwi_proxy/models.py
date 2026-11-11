@@ -210,6 +210,12 @@ class ProviderManifest(Strict):
     requires: list[str] = Field(default_factory=list)
     # Free-form notes surfaced in `kiwi-proxy module list`.
     notes: str = ""
+    # How an exit's gateway uses the provider. "socks": it connects to the
+    # provider's SOCKS5 on the providers bridge. "tunnel": a VPN — the provider
+    # (one per exit) owns the network namespace, its firewall is the kill switch
+    # and its route is the tunnel; the gateway joins it, so members get TCP and
+    # UDP through the tunnel. A tunnel provider is a TunnelProvider.
+    joins: Literal["socks", "tunnel"] = "socks"
 
 
 class ProviderStatus(Strict):

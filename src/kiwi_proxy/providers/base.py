@@ -476,6 +476,18 @@ class TunnelProvider(ContainerProvider):
             # the error carries what its log said.
             self.down(ctx, lease=lease)
             raise
+        if self.manifest.joins == "tunnel":
+            # The gateway joins the tunnel itself: no SOCKS5 adapter. The address
+            # is only for status; the gateway reaches nothing by it.
+            return Endpoint(
+                host=ip,
+                port=0,
+                username=None,
+                has_password=False,
+                module=self.name,
+                lease=lease,
+                country=country,
+            )
         adapter = self.adapter_spec(ctx, tunnel.name, lease=lease)
         _label(adapter, self.name, lease, role="adapter")
         if not podman.is_running(adapter.name):
@@ -523,6 +535,8 @@ class TunnelProvider(ContainerProvider):
     def setup(self, ctx: ProviderContext) -> None:
         if self.manifest.image and "/" in self.manifest.image:
             podman.pull(self.manifest.image)
+        if self.manifest.joins == "tunnel":
+            return  # no adapter: the gateway joins the tunnel
         cf = ctx.containerfile("adapter")
         if not cf.exists():
             raise ProviderError(f"{self.name}: no adapter Containerfile at {cf}")
@@ -537,7 +551,8 @@ class TunnelProvider(ContainerProvider):
         # A tunnel provider needs BOTH images: the tunnel (pulled or built) and the
         # locally-built adapter. Report ready only when both are present.
         status = super().status(ctx)
-        status.image_present = status.image_present and podman.image_exists(ctx.adapter_image)
+        if self.manifest.joins != "tunnel":
+            status.image_present = status.image_present and podman.image_exists(ctx.adapter_image)
         return status
 
 

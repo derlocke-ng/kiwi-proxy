@@ -695,3 +695,68 @@ def test_dns_update_refreshes_every_exits_lists(monkeypatch, capsys):
     assert sorted(fetched) == ["oisd-big", "oisd-small"]
     assert (paths.blocklists_dir() / "blocked-names.txt").exists()
     assert (paths.blocklists_dir() / "blocked-names-oisd-small.txt").exists()
+
+
+# ------------------------------------------------- tunnel exits (a VPN, gluetun)
+@pytest.fixture
+def stamps(monkeypatch):
+    monkeypatch.setattr(dns, "load_stamps", lambda: {"google": "sdns://x"})
+
+
+def install_vpn_module(name="fakevpn"):
+    from test_providers import TUNNEL_MODULE_SRC
+
+    src = TUNNEL_MODULE_SRC.replace('name="faketun"', f'name="{name}"').replace(
+        "needs_account=True,", 'needs_account=True,\n    joins="tunnel",'
+    )
+    mdir = paths.module_dir(name)
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(src)
+
+
+def test_a_vpn_exit_joins_its_tunnel_with_no_adapter(new_exit, fake, stamps):
+    install_vpn_module()
+    ex = new_exit(module="fakevpn", lease="x1", port=0)
+    exits.save(ex)
+    gw = gateway.up(ex, measure=False)
+    tunnel = paths.provider_container_name("fakevpn", "x1")
+    spec = fake.containers[gw.name]
+    assert spec["network"] == f"container:{tunnel}"
+    assert spec["env"]["KF_UPSTREAM"] == "direct"
+    assert "KF_ENDPOINT_IP" not in spec["env"]
+    assert fake.started == [tunnel, gw.name]  # no SOCKS5 adapter
+    assert gateway.is_tunnel(ex) and gateway.tunnel_of(ex) == tunnel
+
+
+def test_a_vpn_exit_resolves_itself_and_has_no_host_listener_yet(new_exit, fake):
+    install_vpn_module()
+    with pytest.raises(gateway.GatewayError, match="resolves names itself"):
+        gateway.up(remote(new_exit, module="fakevpn", lease="x1", port=0), measure=False)
+    ex = new_exit(module="fakevpn", lease="x1", port=0)
+    ex.expose = Expose(port=1091)
+    with pytest.raises(gateway.GatewayError, match="host listener"):
+        gateway.up(ex, measure=False)
+
+
+def test_a_gateway_left_in_an_ended_tunnel_is_started_over(new_exit, fake, stamps):
+    install_vpn_module()
+    ex = new_exit(module="fakevpn", lease="x1", port=0)
+    exits.save(ex)
+    gw = gateway.up(ex, measure=False)
+    fake.join("kf-br-member", gw.name)
+    tunnel = paths.provider_container_name("fakevpn", "x1")
+    fake.containers[tunnel]["running"] = False  # gluetun went away
+    again = gateway.up(ex, measure=False)
+    assert "kf-br-member" not in fake.containers  # no route left: removed
+    assert fake.started.count(tunnel) == 2 and fake.started.count(gw.name) == 2
+    assert any("tunnel had ended" in n for n in again.notes)
+
+
+def test_heal_takes_a_vpn_exit_down_when_its_tunnel_ended(new_exit, fake, stamps):
+    install_vpn_module()
+    ex = new_exit(module="fakevpn", lease="x1", port=0)
+    exits.save(ex)
+    gw = gateway.up(ex, measure=False)
+    fake.rm(paths.provider_container_name("fakevpn", "x1"))
+    assert gateway.heal() == [f"{gw.name}: the VPN tunnel ended; taken down"]
+    assert gw.name not in fake.containers

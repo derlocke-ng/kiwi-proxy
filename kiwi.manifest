@@ -1,7 +1,7 @@
 # kiwi.manifest — app metadata for kiwi-updater
 NAME=kiwi-proxy
 DESCRIPTION=Sealed SOCKS5/VPN exits in rootless Podman — for browsers, pentest tools, host apps and kiwi-server machines
-VERSION=0.10.1
+VERSION=0.11.0
 AUTHOR=derlocke-ng
 HOMEPAGE=https://github.com/derlocke-ng/kiwi-proxy
 LICENSE=GPL-3.0-or-later

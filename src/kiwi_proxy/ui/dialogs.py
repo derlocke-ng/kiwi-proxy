@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 import gi
@@ -43,6 +44,9 @@ _UPSTREAM_LABELS = {
     "mullvad": "Mullvad",
     "google": "Google",
 }
+
+
+CONFIG_HINT = "a WireGuard .conf or an OpenVPN .ovpn"
 
 
 def _resolve_choices() -> list[tuple[str, str | None, str]]:
@@ -202,6 +206,18 @@ class ExitEditor(Adw.Dialog):
         self.where_row.add_suffix(where_button)
         self.where_row.set_activatable_widget(where_button)
         upstream.add(self.where_row)
+        # A module that takes a config of its own (a VPN): the WireGuard or
+        # OpenVPN file, checked by the module when chosen.
+        self._config_text: str | None = None
+        self.config_row = Adw.ActionRow(
+            title="Config", subtitle=CONFIG_HINT, use_markup=False, visible=False
+        )
+        self.config_row.set_subtitle_lines(0)
+        config_button = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+        config_button.connect("clicked", self._on_choose_config)
+        self.config_row.add_suffix(config_button)
+        self.config_row.set_activatable_widget(config_button)
+        upstream.add(self.config_row)
         self.test_row = Adw.ActionRow(
             title="Test the upstream", subtitle="ask what the world sees through it"
         )
@@ -348,10 +364,17 @@ class ExitEditor(Adw.Dialog):
     def _on_source(self, *_args) -> None:
         module = self.module
         lists = selection.supports(module)
+        config = providers.takes_config(module)
         self.endpoint_row.set_visible(module is None)
-        self.lease_row.set_visible(module is not None and not lists)
+        self.lease_row.set_visible(module is not None and not lists and not config)
         self.lease_row.set_title(_noun_of(module).capitalize())
-        self.country_row.set_visible(module is not None and not lists)
+        self.country_row.set_visible(module is not None and not lists and not config)
+        self.config_row.set_visible(config)
+        if config and self._config_text is None:
+            kept = self.ex is not None and self.ex.endpoint.module == module
+            self.config_row.set_subtitle(
+                "kept; choose another to replace it" if kept else CONFIG_HINT
+            )
         self.where_row.set_visible(lists)
         self._show_where()
         # Another module's exit means nothing here; the edited exit's own is kept.
@@ -463,6 +486,33 @@ class ExitEditor(Adw.Dialog):
             picker = LeasePicker(self.module, self.country, self._lease, self._set_lease, tell)
             picker.present(self)
 
+    def _on_choose_config(self, *_args) -> None:
+        dialog = Gtk.FileDialog(title="The VPN's config", modal=True)
+
+        def chosen(d, result) -> None:
+            try:
+                f = d.open_finish(result)
+            except GLib.Error:
+                return  # dismissed
+            self.use_config(f.get_path())
+
+        dialog.open(self.get_root(), None, chosen)
+
+    def use_config(self, path: str) -> None:
+        """Read a chosen config and let the module say what it is."""
+        try:
+            with open(path, encoding="utf-8") as f:  # noqa: PTH123
+                text = f.read()
+            summary = providers.check_config(self.module, text)
+        except (OSError, UnicodeDecodeError, providers.ProviderError) as exc:
+            self._config_text = None
+            self.config_row.set_subtitle(str(exc))
+            return
+        self._config_text = text
+        self.config_row.set_subtitle(summary)
+        if not self.name_row.get_text().strip():
+            self.name_row.set_text(os.path.splitext(os.path.basename(path))[0])
+
     def _refresh(self, *_args) -> None:
         exposed = self.expose_row.get_active()
         for row in (self.bind_row, self.port_row, self.auth_row):
@@ -538,6 +588,16 @@ class ExitEditor(Adw.Dialog):
                 ):
                     raise ValueError(f"port {expose.port} is already {other.name}'s")
         mode, upstream, _label = self._resolve[self.resolve_row.get_selected()]
+        config = None
+        if module and providers.takes_config(module):
+            kept = self.ex is not None and self.ex.endpoint.module == module
+            if self._config_text is None and not kept:
+                raise ValueError("choose the VPN's config file")
+            if expose is not None:
+                raise ValueError("a host SOCKS5 port on a VPN exit is not supported yet")
+            if mode != "resolver":
+                raise ValueError("a VPN exit resolves names in its gateway: choose a resolver")
+            config = self._config_text
         dns_cfg = DnsConfig(
             mode=mode,
             upstream=upstream or prefs.new_exit_dns().upstream,
@@ -551,6 +611,7 @@ class ExitEditor(Adw.Dialog):
             "expose_password": expose_password or None,
             "dns": dns_cfg,
             "socks_auth": SOCKS_AUTH[self.socks_row.get_selected()][0],
+            "config": config,
         }
 
     def _on_test(self, *_args) -> None:
@@ -599,6 +660,8 @@ class ExitEditor(Adw.Dialog):
                 )
                 created.socks_auth = form["socks_auth"]
                 exits.save(created)
+                if form["config"] is not None:
+                    exits.set_config(created, form["config"])
                 return created
             if form["name"] != ex.name and exits.find_by_name(form["name"]):
                 raise exits.ExitError(f"an exit named {form['name']!r} already exists")
@@ -613,6 +676,8 @@ class ExitEditor(Adw.Dialog):
             ex.name, ex.endpoint, ex.dns = form["name"], form["endpoint"], form["dns"]
             ex.expose, ex.socks_auth = form["expose"], form["socks_auth"]
             exits.save(ex)
+            if form["config"] is not None:
+                exits.set_config(ex, form["config"])
             return ex
 
         def done(saved) -> None:

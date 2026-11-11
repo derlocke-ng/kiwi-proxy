@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import sys
+from pathlib import Path
 
 from . import (
     __version__,
@@ -169,6 +170,28 @@ def cmd_add(a: argparse.Namespace) -> int:
         dns_cfg = _dns_from_args(a)
     except ValueError as exc:
         return _fail(str(exc))
+    config_text = None
+    if getattr(a, "config", None):
+        if not a.module:
+            return _fail("--config is for a module exit (--module vpn)")
+        try:
+            config_text = Path(a.config).expanduser().read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            return _fail(f"cannot read {a.config}: {exc}")
+        try:
+            providers.check_config(a.module, config_text)
+        except providers.ProviderError as exc:
+            return _fail(str(exc))
+        if getattr(a, "dns", None) and a.dns != "resolver":
+            return _fail("a VPN exit resolves names itself: leave --dns out")
+        dns_cfg.mode = "resolver"  # whatever Preferences say for new exits
+        if expose is not None:
+            return _fail("a host listener on a VPN exit is not supported yet")
+    elif a.module and providers.takes_config(a.module):
+        return _fail(
+            f"a {a.module} exit needs its config: --config FILE "
+            "(a WireGuard .conf or an OpenVPN .ovpn)"
+        )
     ex = exits.create(
         a.name,
         ep,
@@ -181,10 +204,13 @@ def cmd_add(a: argparse.Namespace) -> int:
     if a.socks_auth:
         ex.socks_auth = a.socks_auth
         exits.save(ex)
+    summary = exits.set_config(ex, config_text) if config_text is not None else None
     note = snapshot_items.auto_exit(ex)
     if a.json:
         return _json(_exit_dict(ex))
     _p(f"added {ex.name} ({ex.id[:8]}) -> {ex.endpoint.label}")
+    if summary:
+        _p(f"  {summary} (TCP and UDP through the tunnel)")
     if ex.expose:
         _p(f"  host SOCKS5 at {ex.expose.address} once up")
     _p(f"  bring it up: kiwi-proxy up {ex.name}")
@@ -1064,6 +1090,12 @@ def _snapshot_parser(sub) -> None:
 def _endpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--module", help="a provider module that produces the endpoint (tor, vpn, …)")
     p.add_argument("--lease", help="which of the module's exits (see `module leases`)")
+    p.add_argument(
+        "--config",
+        metavar="FILE",
+        help="the exit's own config, for a module that takes one "
+        "(vpn: a WireGuard .conf or an OpenVPN .ovpn, full tunnel)",
+    )
     p.add_argument(
         "--country",
         help="two-letter code (`module countries NAME`); for Tor a list to exit through only: de,se",

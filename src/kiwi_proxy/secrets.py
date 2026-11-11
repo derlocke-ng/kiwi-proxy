@@ -16,7 +16,9 @@ import subprocess
 
 from . import paths
 
-KINDS = ("endpoint", "expose", "torcontrol")  # torcontrol: a Tor Browser exit's own Tor
+# torcontrol: a Tor Browser exit's own Tor. vpnconfig: a VPN exit's WireGuard or
+# OpenVPN config, whole (it carries the keys).
+KINDS = ("endpoint", "expose", "torcontrol", "vpnconfig")
 
 
 def backend() -> str:

@@ -8,6 +8,10 @@
 # dies every member loses connectivity: the kill switch is the absence of a
 # route, not software that has to notice.
 #
+#   KF_UPSTREAM        "direct": a tunnel exit (a VPN). This container joined the
+#                      tunnel's namespace, whose firewall (gluetun's) is the kill
+#                      switch and whose route is the tunnel; the forwarder connects
+#                      targets itself. No endpoint, and gluetun's rules stay.
 #   KF_ENDPOINT_IP     the one permitted destination, a literal address
 #   KF_ENDPOINT_HOST   instead of KF_ENDPOINT_IP, a name resolved here once,
 #                      before the firewall goes up (kiwi-server machines, where
@@ -24,14 +28,19 @@ set -euo pipefail
 log() { printf 'gateway: %s\n' "$*"; }
 die() { printf 'gateway: FATAL: %s\n' "$*" >&2; exit 1; }
 
-if [ -z "${KF_ENDPOINT_IP:-}" ] && [ -n "${KF_ENDPOINT_HOST:-}" ]; then
+KF_UPSTREAM="${KF_UPSTREAM:-socks}"
+if [ "$KF_UPSTREAM" = direct ]; then
+    : "${KF_ENDPOINT_IP:=}" "${KF_ENDPOINT_PORT:=0}"
+elif [ -z "${KF_ENDPOINT_IP:-}" ] && [ -n "${KF_ENDPOINT_HOST:-}" ]; then
     KF_ENDPOINT_IP="$(getent ahostsv4 "$KF_ENDPOINT_HOST" | awk 'NR == 1 { print $1 }')"
     [ -n "$KF_ENDPOINT_IP" ] || die "cannot resolve $KF_ENDPOINT_HOST"
     log "resolved $KF_ENDPOINT_HOST -> $KF_ENDPOINT_IP (before sealing)"
     export KF_ENDPOINT_IP
 fi
-: "${KF_ENDPOINT_IP:?KF_ENDPOINT_IP (or KF_ENDPOINT_HOST) is required}"
-: "${KF_ENDPOINT_PORT:?KF_ENDPOINT_PORT is required}"
+if [ "$KF_UPSTREAM" != direct ]; then
+    : "${KF_ENDPOINT_IP:?KF_ENDPOINT_IP (or KF_ENDPOINT_HOST) is required}"
+    : "${KF_ENDPOINT_PORT:?KF_ENDPOINT_PORT is required}"
+fi
 KF_FORWARDER_PORT="${KF_FORWARDER_PORT:-1080}"
 KF_EXPOSE_PORT="${KF_EXPOSE_PORT:-}"
 KF_DNS_MODE="${KF_DNS_MODE:-resolver}"
@@ -57,6 +66,12 @@ CONTROL_RULE=""
 if [ -n "${KF_CONTROL_IP:-}" ]; then
     CONTROL_RULE="ip daddr ${KF_CONTROL_IP} tcp dport ${KF_CONTROL_PORT:-9052} accept"
 fi
+if [ "$KF_UPSTREAM" = direct ]; then
+    # The tunnel's own firewall (gluetun's) allows only the tunnel and its server:
+    # it stays as it is, nothing here flushes it.
+    [ -z "$KF_EXPOSE_PORT" ] || die "a host listener on a tunnel exit is not supported yet"
+    log "firewall: the tunnel's own (its kill switch); traffic leaves only through the tunnel"
+else
 log "firewall: default drop, permitting only ${KF_ENDPOINT_IP}:${KF_ENDPOINT_PORT}${KF_CONTROL_IP:+ and ${KF_CONTROL_IP}:${KF_CONTROL_PORT:-9052} (Tor control)}"
 nft -f - <<EOF
 flush ruleset
@@ -85,6 +100,7 @@ table inet kiwiproxy {
   }
 }
 EOF
+fi
 
 # --------------------------------------------------------------- forwarder
 log "forwarder: starting on 127.0.0.1:${KF_FORWARDER_PORT}"
@@ -118,17 +134,31 @@ fi
 
 # ---------------------------------------------------------------- resolver
 RESOLVER_PID=""
+# One A query for example.com at the resolver; exit 0 when it answers with one.
+RESOLVER_PROBE='
+import socket, struct
+q = struct.pack("!6H", 0x4B1D, 0x0100, 1, 0, 0, 0) + b"\x07example\x03com\x00" + struct.pack("!2H", 1, 1)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(1)
+s.sendto(q, ("127.0.0.2", 53))
+d = s.recv(512)
+raise SystemExit(0 if d[3] & 0x0F == 0 and struct.unpack("!H", d[6:8])[0] > 0 else 1)
+'
 if [ "$KF_DNS_MODE" = resolver ]; then
     [ -f "$RESOLVER_CFG" ] || die "resolver mode but $RESOLVER_CFG is missing"
     log "resolver: dnscrypt-proxy on 127.0.0.2:53, upstream DoH through the forwarder"
     dnscrypt-proxy -config "$RESOLVER_CFG" &
     RESOLVER_PID=$!
-    for _ in $(seq 1 100); do
+    # Ready means it answers a name, asked directly at 127.0.0.2 — not through
+    # this container's resolv.conf (podman's, which the firewall blocks; in a
+    # VPN's namespace the tunnel's own resolver, which is off).
+    answered=false
+    for _ in $(seq 1 60); do
         kill -0 "$RESOLVER_PID" 2>/dev/null || die "dnscrypt-proxy exited during startup"
-        if getent hosts -s dns example.com >/dev/null 2>&1; then break; fi
-        sleep 0.2
+        if python3 -c "$RESOLVER_PROBE" 2>/dev/null; then answered=true; break; fi
+        sleep 0.5
     done
-    log "resolver: up"
+    if [ "$answered" = true ]; then log "resolver: up"; else log "resolver: no answer yet; going on"; fi
 else
     log "resolver: disabled (remote DNS at the proxy)"
 fi

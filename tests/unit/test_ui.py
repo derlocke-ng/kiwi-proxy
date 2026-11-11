@@ -644,3 +644,48 @@ def test_the_editor_saves_a_tor_exits_lists():
     ed._only_countries = ["DE", "SE"]
     ep = ed.collect()["endpoint"]
     assert ep.only_countries == ["DE", "SE"] and ep.never_countries == ["HU"]
+
+
+def _vpn_module():
+    from test_vpn_exits import MODULE_SRC
+
+    from kiwi_proxy import paths
+
+    mdir = paths.module_dir("fakevpn")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(MODULE_SRC)
+
+
+def test_the_editor_takes_a_vpn_config_file(tmp_path, monkeypatch):
+    from test_vpn_exits import FULL
+
+    from kiwi_proxy import secrets
+    from kiwi_proxy.ui.dialogs import ExitEditor
+
+    monkeypatch.setenv("KIWI_PROXY_SECRETS", "file")
+    _vpn_module()
+    ed = ExitEditor(None, lambda e: None)
+    ed.source_row.set_selected(1 + ed._modules.index("fakevpn"))
+    _spin()
+    assert ed.config_row.get_visible() and not ed.lease_row.get_visible()
+    assert not ed.country_row.get_visible()
+    ed.name_row.set_text("x")
+    with pytest.raises(ValueError, match="config file"):
+        ed.collect()
+    ed.name_row.set_text("")
+    split = tmp_path / "split.conf"
+    split.write_text(FULL.replace("0.0.0.0/0", "10.8.0.1/24"))
+    ed.use_config(str(split))
+    assert "full tunnel" in ed.config_row.get_subtitle()
+    conf = tmp_path / "home-vpn.conf"
+    conf.write_text(FULL)
+    ed.use_config(str(conf))
+    assert ed.config_row.get_subtitle() == "WireGuard · vpn.example.org:51820"
+    assert ed.name_row.get_text() == "home-vpn"  # named after the file
+    form = ed.collect()
+    assert form["config"] == FULL and form["dns"].mode == "resolver"
+    ed._on_save()
+    _spin(1.5)
+    ex = exits.find_by_name("home-vpn")
+    assert ex is not None and ex.endpoint.lease == ex.id
+    assert secrets.lookup(ex.id, kind="vpnconfig") == FULL
