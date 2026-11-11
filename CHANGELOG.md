@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.0
+
+**Tor Browser's control port, filtered.** New Identity, the circuit display and
+onion-site client keys need Tor's control port; Tor Browser had none (it ran
+proxy-only). Needs kiwi-plugin-tor 0.5.0; Kiwi Fox 0.10.3 uses it.
+
+- A Tor exit for Tor Browser (passthrough) gets a Tor of its own with a
+  password-protected control port on the providers bridge; the password is the
+  exit's, kept like its other secrets.
+- The gateway's forwarder filters it on 127.0.0.1:9151 in the exit's namespace,
+  the way Whonix's onion-grater does: New Identity (SIGNAL NEWNYM), status and
+  circuit reads, the events Tor Browser listens to, and onion-site client keys go
+  through; what would change Tor is refused (510) or answered "250 OK" without
+  reaching it (taking ownership, DisableNetwork=0); the password and Tor's
+  configuration stay out of reach. The gateway's firewall permits that one port.
+- **The gateway image is rebuilt when kiwi-proxy is newer** than the image, at the
+  next start, as module images are since 0.9.2; a failed rebuild stops the start.
+
 ## 0.9.3
 
 - **The Eyes group for every relay, if you want it:** Preferences → Tor → "Also as

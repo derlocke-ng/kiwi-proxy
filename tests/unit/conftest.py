@@ -22,6 +22,10 @@ def _hermetic(tmp_path, monkeypatch):
     from kiwi_proxy import storage
 
     monkeypatch.setattr(storage, "remove_leftovers", lambda app: [])
+    # nor builds this machine's gateway image
+    from kiwi_proxy import gateway
+
+    monkeypatch.setattr(gateway, "_ensure_current_gateway_image", lambda: None)
 
 
 def make_exit(module=None, lease=None, port=1080, **kw) -> Exit:

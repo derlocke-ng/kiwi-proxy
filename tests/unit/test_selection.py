@@ -124,7 +124,7 @@ def test_the_provider_gets_the_selection_and_its_own_container(monkeypatch):
     ex = exits.create("research", tor_endpoint(only_countries=["DE", "SE"], never_countries=["HU"]))
     plan = gateway.ensure_provider(ex)
     lease, _country, sel = seen[-1]
-    assert lease == selection.lease_of(ex.endpoint) and sel.only_countries == ("DE", "SE")
+    assert lease == selection.lease_for(ex) and sel.only_countries == ("DE", "SE")
     assert plan.ip == "10.89.231.77"
     ex.endpoint.only_countries = ["HU"]
     with pytest.raises(gateway.GatewayError, match="cannot be both Only and Never"):
@@ -235,3 +235,24 @@ def test_the_group_for_every_relay_is_its_own_choice():
     everywhere = selection.of(tor_endpoint())
     assert set(everywhere.never_anywhere) == set(selection.FIVE)
     assert everywhere.key() != exit_only.key()  # a Tor of its own
+
+
+def test_a_tor_browser_exit_gets_its_own_tor_and_a_control_password():
+    from kiwi_proxy import secrets
+
+    plain = exits.create("plain-tor", tor_endpoint())
+    plain.socks_auth = "inject"
+    tb = exits.create("tb-tor", tor_endpoint())
+    tb.socks_auth = "passthrough"
+    assert not selection.wants_control(plain) and selection.wants_control(tb)
+    sel = selection.for_exit(tb)
+    assert sel.control_for == tb.id and len(sel.control_password) > 20
+    assert secrets.lookup(tb.id, kind="torcontrol") == sel.control_password
+    assert selection.for_exit(tb).control_password == sel.control_password  # kept
+    assert selection.lease_for(tb) != selection.lease_for(plain)  # a Tor of its own
+    spec = gateway.gateway_spec(tb, "10.89.231.9", network=paths.PROVIDERS_NETWORK)
+    assert spec.env["KF_CONTROL_IP"] == "10.89.231.9" and spec.env["KF_CONTROL_PORT"] == "9052"
+    assert (
+        "KF_CONTROL_IP"
+        not in gateway.gateway_spec(plain, "10.89.231.9", network=paths.PROVIDERS_NETWORK).env
+    )

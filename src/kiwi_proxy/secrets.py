@@ -16,7 +16,7 @@ import subprocess
 
 from . import paths
 
-KINDS = ("endpoint", "expose")
+KINDS = ("endpoint", "expose", "torcontrol")  # torcontrol: a Tor Browser exit's own Tor
 
 
 def backend() -> str:

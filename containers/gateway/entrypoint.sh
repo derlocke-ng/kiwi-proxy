@@ -52,7 +52,12 @@ esac
 # ---------------------------------------------------------------- firewall
 # Rules key on destination, not on sending uid: a uid-matched exemption breaks
 # silently if a relay drops privileges differently than expected.
-log "firewall: default drop, permitting only ${KF_ENDPOINT_IP}:${KF_ENDPOINT_PORT}"
+# A Tor exit for Tor Browser: its Tor's control port, behind the forwarder's filter.
+CONTROL_RULE=""
+if [ -n "${KF_CONTROL_IP:-}" ]; then
+    CONTROL_RULE="ip daddr ${KF_CONTROL_IP} tcp dport ${KF_CONTROL_PORT:-9052} accept"
+fi
+log "firewall: default drop, permitting only ${KF_ENDPOINT_IP}:${KF_ENDPOINT_PORT}${KF_CONTROL_IP:+ and ${KF_CONTROL_IP}:${KF_CONTROL_PORT:-9052} (Tor control)}"
 nft -f - <<EOF
 flush ruleset
 
@@ -65,6 +70,7 @@ table inet kiwiproxy {
 
     # The one permitted destination.
     ip daddr ${KF_ENDPOINT_IP} tcp dport ${KF_ENDPOINT_PORT} accept
+    ${CONTROL_RULE}
 
     # Everything else is dropped: no direct TCP, no UDP (so no QUIC and no
     # WebRTC media), no plaintext DNS, no ICMP, no IPv6.

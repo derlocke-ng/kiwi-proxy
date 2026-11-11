@@ -611,3 +611,31 @@ def test_remote_mode_still_passes_the_name_through(monkeypatch):
     rep, body, requests, asked = asyncio.run(_roundtrip_resolving(None, "203.0.113.9", monkeypatch))
     assert rep == 0 and body == PAYLOAD
     assert requests == [(3, b"ifconfig.co", 443)] and asked == []
+
+
+# ------------------------------------------------------------ control filter
+@pytest.mark.parametrize(
+    ("line", "action", "starts"),
+    [
+        ("PROTOCOLINFO 1\r\n", "reply", "250-PROTOCOLINFO"),
+        ('AUTHENTICATE "anything"\r\n', "reply", "250 OK"),
+        ("TAKEOWNERSHIP\r\n", "reply", "250 OK"),
+        ("SETCONF DisableNetwork=0\r\n", "reply", "250 OK"),
+        ("SIGNAL NEWNYM\r\n", "pass", "SIGNAL NEWNYM"),
+        ("SIGNAL HALT\r\n", "reply", "510"),
+        ("GETINFO version circuit-status\r\n", "pass", "GETINFO"),
+        ("GETINFO ns/id/ABCD ip-to-country/1.2.3.4\r\n", "pass", "GETINFO"),
+        ("GETINFO config-text\r\n", "reply", "552"),
+        ("GETINFO net/listeners/socks\r\n", "reply", '250-net/listeners/socks="127.0.0.1:1080"'),
+        ("GETCONF UseBridges\r\n", "pass", "GETCONF"),
+        ("GETCONF HashedControlPassword\r\n", "reply", "552"),
+        ("SETCONF ExitNodes={us}\r\n", "reply", "510"),
+        ("SETEVENTS STREAM CIRC ADDRMAP\r\n", "pass", "SETEVENTS STREAM CIRC\r\n"),
+        ("ONION_CLIENT_AUTH_ADD abc.onion x25519:KEY\r\n", "pass", "ONION_CLIENT_AUTH_ADD"),
+        ("ADD_ONION NEW:BEST Port=80\r\n", "reply", "510"),
+        ("MAPADDRESS 1.2.3.4=evil.example\r\n", "reply", "510"),
+    ],
+)
+def test_the_control_filter_lets_through_only_what_tor_browser_needs(line, action, starts):
+    got_action, out = fwd.control_decide(line, 1080)
+    assert got_action == action and out.startswith(starts), out

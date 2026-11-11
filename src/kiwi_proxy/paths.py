@@ -164,6 +164,11 @@ def creds_secret_name(exit_id: str) -> str:
     return f"{PREFIX}-creds-{exit_id[:12]}"
 
 
+def control_secret_name(exit_id: str) -> str:
+    """The password of a Tor Browser exit's own Tor control port, for its gateway."""
+    return f"{PREFIX}-ctl-{exit_id[:12]}"
+
+
 def expose_secret_name(exit_id: str) -> str:
     return f"{PREFIX}-expose-{exit_id[:12]}"
 

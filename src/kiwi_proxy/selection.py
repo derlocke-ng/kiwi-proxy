@@ -56,18 +56,32 @@ class Selection:
     own_never: tuple[str, ...] = field(default=(), compare=False)
     # the Eyes group for every position (entry, middle, exit), when the preference says so
     never_anywhere: tuple[str, ...] = ()
+    # A Tor Browser exit (socks_auth passthrough): a Tor of its own with a control
+    # port for the gateway's filter. The exit's id keys the container; the
+    # password is not part of the key.
+    control_for: str = ""
+    control_password: str = field(default="", compare=False, repr=False)
 
     @property
     def empty(self) -> bool:
         return not (
-            self.only_countries or self.only_nodes or self.never_countries or self.never_anywhere
+            self.only_countries
+            or self.only_nodes
+            or self.never_countries
+            or self.never_anywhere
+            or self.control_for
         )
 
     def key(self) -> str:
         """A lease for the provider container this selection needs."""
-        text = "|".join(
-            ",".join(part) for part in (self.only_countries, self.only_nodes, self.never_countries)
-        ) + ("|all:" + ",".join(self.never_anywhere) if self.never_anywhere else "")
+        text = (
+            "|".join(
+                ",".join(part)
+                for part in (self.only_countries, self.only_nodes, self.never_countries)
+            )
+            + ("|all:" + ",".join(self.never_anywhere) if self.never_anywhere else "")
+            + ("|ctl:" + self.control_for if self.control_for else "")
+        )
         return "x" + hashlib.sha256(text.encode()).hexdigest()[:10]
 
     def problems(self) -> list[str]:
@@ -129,6 +143,45 @@ def of(endpoint) -> Selection | None:
         own_never=own,
         never_anywhere=tuple(sorted(group)) if prefs.load().tor_never_all else (),
     )
+
+
+CONTROL_PORT = 9052  # the control port a Tor Browser exit's Tor opens on the bridge
+
+
+def wants_control(ex) -> bool:
+    """A Tor exit Tor Browser uses (passthrough): New Identity, the circuit display
+    and onion-site keys need Tor's control port, behind the gateway's filter."""
+    return ex.socks_auth == "passthrough" and supports(ex.endpoint.module)
+
+
+def for_exit(ex) -> Selection | None:
+    """The selection for a whole exit: its endpoint's, plus its own Tor and a
+    control password when Tor Browser uses it."""
+    import dataclasses
+
+    sel = of(ex.endpoint)
+    if sel is None or not wants_control(ex):
+        return sel
+    from . import secrets
+
+    password = secrets.lookup(ex.id, kind="torcontrol")
+    if not password:
+        import secrets as rnd
+
+        password = rnd.token_urlsafe(24)
+        secrets.store(ex.id, password, kind="torcontrol")
+    return dataclasses.replace(sel, control_for=ex.id, control_password=password)
+
+
+def lease_for(ex) -> str | None:
+    """The lease naming an exit's provider container (see lease_of), with a Tor
+    of its own for a Tor Browser exit."""
+    if ex.endpoint.lease:
+        return ex.endpoint.lease
+    if not wants_control(ex):
+        return lease_of(ex.endpoint)
+    sel = for_exit(ex)
+    return sel.key() if sel else None
 
 
 def lease_of(endpoint) -> str | None:

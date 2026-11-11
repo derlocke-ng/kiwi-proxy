@@ -524,6 +524,137 @@ def read_table(path: str, name: str) -> tuple[str | None, str | None, str | None
     return None, None, None, None
 
 
+# ------------------------------------------------------------ control filter
+# Tor Browser talks to Tor's control port for New Identity, its circuit display,
+# its bootstrap status and onion-site client keys. A Tor exit made for Tor Browser
+# runs a Tor of its own with a password-protected control port on the providers
+# bridge (KF_CONTROL_IP/PORT); this filter, on 127.0.0.1:KF_CONTROL_LISTEN in the
+# namespace, authenticates to it and lets through only what Tor Browser needs
+# (as Whonix's onion-grater does). Commands that would change Tor are refused or
+# answered "250 OK" without reaching it.
+CONTROL_GETINFO = (
+    "version",
+    "status/bootstrap-phase",
+    "status/circuit-established",
+    "circuit-status",
+    "stream-status",
+    "ns/id/",
+    "ns/name/",
+    "md/id/",
+    "ip-to-country/",
+    "onions/current",
+)
+CONTROL_GETCONF = {
+    "usebridges",
+    "bridge",
+    "socks4proxy",
+    "socks5proxy",
+    "httpsproxy",
+    "reachableaddresses",
+    "disablenetwork",
+    "clientonionauthdir",
+}
+CONTROL_EVENTS = {"STATUS_CLIENT", "NOTICE", "WARN", "ERR", "STREAM", "CIRC", "NEWCONSENSUS"}
+CONTROL_PASS = {
+    "ONION_CLIENT_AUTH_ADD",
+    "ONION_CLIENT_AUTH_REMOVE",
+    "ONION_CLIENT_AUTH_VIEW",
+    "QUIT",
+}
+CONTROL_FAKE_OK = {
+    "AUTHENTICATE",
+    "AUTHCHALLENGE",
+    "TAKEOWNERSHIP",
+    "DROPOWNERSHIP",
+    "SAVECONF",
+    "RESETCONF",
+}
+
+
+def _getinfo_allowed(key: str) -> bool:
+    return any(key == q or (q.endswith("/") and key.startswith(q)) for q in CONTROL_GETINFO)
+
+
+def control_decide(line: str, socks_port: int) -> tuple[str, str]:
+    """-> ("pass", line to send) | ("reply", reply to give) for one command line."""
+    word, _, rest = line.strip().partition(" ")
+    cmd = word.upper()
+    if cmd == "PROTOCOLINFO":
+        return (
+            "reply",
+            '250-PROTOCOLINFO 1\r\n250-AUTH METHODS=NULL\r\n250-VERSION Tor="0.4"\r\n250 OK\r\n',
+        )
+    if cmd in CONTROL_FAKE_OK:
+        return "reply", "250 OK\r\n"
+    if cmd == "SETCONF" and rest.replace(" ", "").lower() in (
+        "disablenetwork=0",
+        'disablenetwork="0"',
+    ):
+        return "reply", "250 OK\r\n"
+    if cmd == "SIGNAL" and rest.strip().upper() in ("NEWNYM", "CLEARDNSCACHE"):
+        return "pass", line
+    if cmd == "GETINFO":
+        keys = rest.split()
+        if keys == ["net/listeners/socks"]:
+            return "reply", f'250-net/listeners/socks="127.0.0.1:{socks_port}"\r\n250 OK\r\n'
+        if keys and all(_getinfo_allowed(k) for k in keys):
+            return "pass", line
+        return "reply", "552 Unrecognized key\r\n"
+    if cmd == "GETCONF":
+        keys = rest.split()
+        if keys and all(k.lower() in CONTROL_GETCONF for k in keys):
+            return "pass", line
+        return "reply", "552 Unrecognized configuration key\r\n"
+    if cmd == "SETEVENTS":
+        events = [e for e in rest.split() if e.upper() in CONTROL_EVENTS]
+        return "pass", ("SETEVENTS " + " ".join(events)).rstrip() + "\r\n"
+    if cmd in CONTROL_PASS:
+        return "pass", line
+    return "reply", "510 Command filtered\r\n"
+
+
+async def control_session(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    upstream: tuple[str, int, str],
+    socks_port: int,
+) -> None:
+    host, port, password = upstream
+    try:
+        up_r, up_w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=10)
+    except (OSError, asyncio.TimeoutError):
+        writer.write(b"551 Tor is not reachable\r\n")
+        await shutdown(writer)
+        return
+    quoted = password.replace("\\", "\\\\").replace('"', '\\"')
+    up_w.write(f'AUTHENTICATE "{quoted}"\r\n'.encode())
+    await up_w.drain()
+    answer = await up_r.readline()
+    if not answer.startswith(b"250"):
+        LOG.error("control: Tor refused the password")
+        writer.write(b"515 Authentication failed\r\n")
+        await shutdown(writer, up_w)
+        return
+    relay = asyncio.create_task(pipe(up_r, writer))
+    try:
+        while line := await reader.readline():
+            text = line.decode("utf-8", "replace")
+            action, out = control_decide(text, socks_port)
+            if action == "reply":
+                writer.write(out.encode())
+                await writer.drain()
+            else:
+                up_w.write(
+                    out.encode() if out.endswith("\r\n") else (out.rstrip("\r\n") + "\r\n").encode()
+                )
+                await up_w.drain()
+    except (ConnectionError, OSError):
+        pass
+    finally:
+        relay.cancel()
+        await shutdown(writer, up_w)
+
+
 async def main() -> int:
     logging.basicConfig(level=logging.INFO, format="forwarder: %(message)s", stream=sys.stderr)
     host = os.environ.get("KF_ENDPOINT_IP")
@@ -575,6 +706,26 @@ async def main() -> int:
             "host listener on 0.0.0.0:%s (%s)",
             expose_port,
             "password required" if inbound.authed else "no password",
+        )
+    control_ip = os.environ.get("KF_CONTROL_IP")
+    if control_ip:
+        password = (
+            Path(os.environ.get("KF_CONTROL_PASSWORD_FILE", "/run/kf/control")).read_text().strip()
+        )
+        control_port = int(os.environ.get("KF_CONTROL_PORT", "9052"))
+        control_listen = int(os.environ.get("KF_CONTROL_LISTEN", "9151"))
+        servers.append(
+            await asyncio.start_server(
+                lambda r, w: control_session(
+                    r, w, (control_ip, control_port, password), listen_port
+                ),
+                "127.0.0.1",
+                control_listen,
+                reuse_address=True,
+            )
+        )
+        LOG.info(
+            "control filter on 127.0.0.1:%s -> %s:%s", control_listen, control_ip, control_port
         )
     await asyncio.gather(*(s.serve_forever() for s in servers))
     return 0

@@ -196,6 +196,13 @@ def gateway_spec(
     if ex.socks_auth != "inject":
         env["KF_SOCKS_AUTH"] = ex.socks_auth
     secrets_: list[tuple[str, str]] = [(secret, target)]
+    if network == paths.PROVIDERS_NETWORK and selection.wants_control(ex):
+        # Tor Browser's control port: the exit's own Tor, behind the forwarder's filter
+        ctl = paths.control_secret_name(ex.id)
+        env["KF_CONTROL_IP"] = endpoint_ip
+        env["KF_CONTROL_PORT"] = str(selection.CONTROL_PORT)
+        env["KF_CONTROL_PASSWORD_FILE"] = f"/run/secrets/{ctl}"
+        secrets_.append((ctl, f"/run/secrets/{ctl}"))
     publish: list[str] = []
     if ex.dns.mode == "resolver":
         # ",z" relabels for SELinux: without it an enforcing host denies the
@@ -214,7 +221,7 @@ def gateway_spec(
     }
     if ex.endpoint.module and providers.manages(ex.endpoint.module):
         all_labels[paths.MODULE_LABEL] = ex.endpoint.module
-        if lease := selection.lease_of(ex.endpoint):
+        if lease := selection.lease_for(ex):
             all_labels[paths.LEASE_LABEL] = lease
     if ex.expose:
         env["KF_EXPOSE_PORT"] = str(EXPOSE_PORT)
@@ -269,14 +276,12 @@ def config_hash(spec: ContainerSpec, resolver_cfg: Path | None) -> str:
 def _provider_up(prov, ctx, ex: Exit):
     """Bring an exit's provider up: with its selection (only, never) for a module
     that takes one, in a container of its own for that selection."""
-    sel = selection.of(ex.endpoint)
+    sel = selection.for_exit(ex)
     if sel is None:
         return prov.up(ctx, lease=ex.endpoint.lease, country=ex.endpoint.country)
     if problems := sel.problems():
         raise providers.ProviderError(f"{ex.name}: " + "; ".join(problems))
-    return prov.up(
-        ctx, lease=selection.lease_of(ex.endpoint), country=ex.endpoint.country, selection=sel
-    )
+    return prov.up(ctx, lease=selection.lease_for(ex), country=ex.endpoint.country, selection=sel)
 
 
 def ensure_provider(ex: Exit) -> EndpointPlan:
@@ -411,6 +416,25 @@ def _remove_member(name: str) -> None:
     podman.rm(name)
 
 
+def _ensure_current_gateway_image() -> None:
+    """Rebuild the gateway image when kiwi-proxy was updated since it was built
+    (its forwarder, its firewall): a gateway from an older image would lack what
+    this version starts it with. A rebuild that fails stops the start."""
+    from . import setup
+
+    if setup.image_state(paths.GATEWAY_IMAGE, "gateway") == "current":
+        return
+    try:
+        setup.build_images()
+    except Exception as exc:  # noqa: BLE001 - a build, a network
+        raise GatewayError(
+            f"the gateway image is older than kiwi-proxy and could not be rebuilt ({exc}); "
+            "`kiwi-proxy setup`"
+        ) from exc
+    if setup.image_state(paths.GATEWAY_IMAGE, "gateway") != "current":
+        raise GatewayError("the gateway image could not be rebuilt; `kiwi-proxy setup`")
+
+
 def up(
     ex: Exit,
     *,
@@ -479,6 +503,9 @@ def up(
         )
     write_credentials(ex, password)
     write_expose_credentials(ex, expose_password)
+    if pl.network == paths.PROVIDERS_NETWORK and selection.wants_control(ex):
+        podman.secret_set(paths.control_secret_name(ex.id), selection.for_exit(ex).control_password)
+    _ensure_current_gateway_image()
     # Whoever joined the old namespace makes the gateway a dependent container:
     # podman refuses to replace it while they exist ("has dependent containers
     # which must be removed before it"). They have no route without it anyway.
@@ -537,6 +564,7 @@ def down(exit_id: str) -> None:
         _remove_member(dep)
     podman.rm(name)
     podman.secret_rm(paths.creds_secret_name(exit_id))
+    podman.secret_rm(paths.control_secret_name(exit_id))
     podman.secret_rm(paths.expose_secret_name(exit_id))
     module, lease = lab.get(paths.MODULE_LABEL), lab.get(paths.LEASE_LABEL)
     if not module and exits.exists(exit_id):
@@ -544,7 +572,7 @@ def down(exit_id: str) -> None:
         # may have — so the exit says which provider to let go of.
         ex = exits.load(exit_id)
         if providers.manages(ex.endpoint.module):
-            module, lease = ex.endpoint.module, selection.lease_of(ex.endpoint)
+            module, lease = ex.endpoint.module, selection.lease_for(ex)
     if module:
         _release_provider(module, lease, exclude=name)
 
@@ -594,7 +622,7 @@ def _provider_lease(ex) -> str | None:
         lab = podman.labels(name)
         if lab.get(paths.MODULE_LABEL) == ex.endpoint.module:
             return lab.get(paths.LEASE_LABEL) or None
-    return selection.lease_of(ex.endpoint)
+    return selection.lease_for(ex)
 
 
 def provider_alive(ex) -> bool | None:
@@ -698,7 +726,7 @@ def heal() -> list[str]:
         try:
             prov, manifest = providers.load(module)
             ctx = providers.context_for(module, manifest)
-            prov.down(ctx, lease=selection.lease_of(ex.endpoint))
+            prov.down(ctx, lease=selection.lease_for(ex))
             ep = _provider_up(prov, ctx, ex)
         except providers.ProviderError as exc:
             healed.append(f"{gw['name']}: {exc}")
