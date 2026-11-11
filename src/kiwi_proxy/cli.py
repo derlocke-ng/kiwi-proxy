@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import shutil
 import sys
 
@@ -443,6 +444,18 @@ def cmd_reap(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_nyx(a: argparse.Namespace) -> int:
+    """Tor's own monitor (nyx) for a Tor exit, in this terminal."""
+    ex = exits.resolve_ref(a.ref)
+    if not selection.supports(ex.endpoint.module):
+        return _fail(f"{ex.name} is not a Tor exit")
+    if not podman.is_running(paths.gateway_name(ex.id)):
+        return _fail(f"{ex.name} is not up: kiwi-proxy up {ex.name}")
+    container = paths.provider_container_name(ex.endpoint.module, gateway._provider_lease(ex))
+    os.execvp("podman", ["podman", "exec", "-it", container, "nyx"])  # noqa: S606, S607
+    return 0
+
+
 def cmd_prefs(a: argparse.Namespace) -> int:
     """What a new exit starts with (DNS), and the Eyes group no Tor exit uses."""
     p = prefs.load()
@@ -459,6 +472,8 @@ def cmd_prefs(a: argparse.Namespace) -> int:
         p.new_exit_blocklists, changed = list(a.blocklist), True
     if a.tor_never is not None:
         p.tor_never_group, changed = ("" if a.tor_never == "none" else a.tor_never), True
+    if a.tor_never_all is not None:
+        p.tor_never_all, changed = a.tor_never_all == "on", True
     if changed:
         prefs.save(p)
     group = selection.EYES.get(p.tor_never_group, ())
@@ -467,6 +482,7 @@ def cmd_prefs(a: argparse.Namespace) -> int:
     _p(
         f"no Tor exit leaves through {selection.EYES_TITLES[p.tor_never_group]}"
         + (f" ({', '.join(group)})" if group else "")
+        + (" — and no relay of a circuit is there" if group and p.tor_never_all else "")
     )
     if changed and a.tor_never is not None:
         _p("Tor exits brought up from now on follow it; running ones at their next start")
@@ -1177,11 +1193,17 @@ def build_parser() -> argparse.ArgumentParser:
     ps.set_defaults(func=cmd_ps)
 
     sub.add_parser("reap", help="tear down gateways nobody uses").set_defaults(func=cmd_reap)
+    ny = sub.add_parser("nyx", help="Tor's monitor (nyx) for a Tor exit, in this terminal")
+    ny.add_argument("ref")
+    ny.set_defaults(func=cmd_nyx)
     pf = sub.add_parser("prefs", help="what new exits start with; the Eyes group Tor never uses")
     pf.add_argument("--upstream", help=f"new exits resolve through: {', '.join(dns.UPSTREAMS)}")
     pf.add_argument("--blocklist", action="append", help="new exits block these (repeatable)")
     pf.add_argument("--no-blocklist", action="store_true")
     pf.add_argument("--tor-never", choices=("none", "five", "nine", "fourteen"))
+    pf.add_argument(
+        "--tor-never-all", choices=("on", "off"), help="the group also as entry and middle relays"
+    )
     pf.set_defaults(func=cmd_prefs)
     st = sub.add_parser("storage", help="check podman's storage, repair it, remove leftovers")
     stsub = st.add_subparsers(dest="storage_cmd", required=True)

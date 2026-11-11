@@ -54,16 +54,20 @@ class Selection:
     only_nodes: tuple[str, ...] = ()
     never_countries: tuple[str, ...] = ()  # this exit's own and the Eyes group's
     own_never: tuple[str, ...] = field(default=(), compare=False)
+    # the Eyes group for every position (entry, middle, exit), when the preference says so
+    never_anywhere: tuple[str, ...] = ()
 
     @property
     def empty(self) -> bool:
-        return not (self.only_countries or self.only_nodes or self.never_countries)
+        return not (
+            self.only_countries or self.only_nodes or self.never_countries or self.never_anywhere
+        )
 
     def key(self) -> str:
         """A lease for the provider container this selection needs."""
         text = "|".join(
             ",".join(part) for part in (self.only_countries, self.only_nodes, self.never_countries)
-        )
+        ) + ("|all:" + ",".join(self.never_anywhere) if self.never_anywhere else "")
         return "x" + hashlib.sha256(text.encode()).hexdigest()[:10]
 
     def problems(self) -> list[str]:
@@ -117,11 +121,13 @@ def of(endpoint) -> Selection | None:
     if not only and endpoint.country:  # an exit made with --country before lists
         only = [endpoint.country]
     own = clean(endpoint.never_countries)
+    group = blocked_everywhere()
     return Selection(
         only_countries=clean(only),
         only_nodes=clean_nodes(endpoint.only_nodes),
-        never_countries=tuple(sorted(set(own) | set(blocked_everywhere()))),
+        never_countries=tuple(sorted(set(own) | set(group))),
         own_never=own,
+        never_anywhere=tuple(sorted(group)) if prefs.load().tor_never_all else (),
     )
 
 

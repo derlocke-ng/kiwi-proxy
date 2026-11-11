@@ -225,3 +225,13 @@ def test_a_module_image_older_than_the_module_is_rebuilt_before_a_start(monkeypa
     )
     with pytest.raises(providers.ProviderError, match="could not be rebuilt"):
         prov._ensure_current_image(ctx)
+
+
+def test_the_group_for_every_relay_is_its_own_choice():
+    prefs.save(prefs.Prefs(tor_never_group="five"))
+    exit_only = selection.of(tor_endpoint())
+    assert exit_only.never_anywhere == ()
+    prefs.save(prefs.Prefs(tor_never_group="five", tor_never_all=True))
+    everywhere = selection.of(tor_endpoint())
+    assert set(everywhere.never_anywhere) == set(selection.FIVE)
+    assert everywhere.key() != exit_only.key()  # a Tor of its own

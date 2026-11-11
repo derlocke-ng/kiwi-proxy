@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.3
+
+- **The Eyes group for every relay, if you want it:** Preferences → Tor → "Also as
+  entry and middle relays" (`kiwi-proxy prefs --tor-never-all on`). Off, the group's
+  countries are never the exit (as before); on, never any relay of a circuit. The
+  (?) says what it costs: fewer guards to choose from.
+- **Tor's monitor, nyx,** for a Tor exit that is up: "Tor monitor (nyx)" in its
+  menu opens it in a terminal, `kiwi-proxy nyx EXIT` in this one. Needs
+  kiwi-plugin-tor 0.4.1.
+
 ## 0.9.2
 
 - **A module's image is rebuilt when the module is newer.** Updating a module

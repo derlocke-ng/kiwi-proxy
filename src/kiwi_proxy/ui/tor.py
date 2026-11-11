@@ -80,6 +80,18 @@ class TorPage(Adw.PreferencesPage):
             row.set_activatable_widget(check)
             self.group.add(row)
             self._rows[key] = row
+        self.all_row = Adw.SwitchRow(
+            title="Also as entry and middle relays", active=prefs.load().tor_never_all
+        )
+        explain(
+            self.all_row,
+            "Off: the group's countries are never the exit. On: never any relay of a circuit. "
+            "Fewer relays to choose the long-lived entry (guard) from makes a Tor user "
+            "easier to tell apart, so this costs more than the exit-only choice.",
+            app="kiwi-proxy",
+        )
+        self.all_row.connect("notify::active", self._on_all)
+        self.group.add(self.all_row)
         self._show({})
         worker.run(lambda: _counts_and_nodes()[0], self._show, lambda _e: None)
 
@@ -103,6 +115,11 @@ class TorPage(Adw.PreferencesPage):
             row.set_subtitle(text)
             if key:
                 previous, previous_key = group, key
+
+    def _on_all(self, row, _param) -> None:
+        p = prefs.load()
+        p.tor_never_all = row.get_active()
+        prefs.save(p)
 
     def _on_toggled(self, check, key: str) -> None:
         if not check.get_active():

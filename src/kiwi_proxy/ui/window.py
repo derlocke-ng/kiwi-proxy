@@ -191,6 +191,7 @@ class Window(Adw.ApplicationWindow):
             ("copy-gateway", self._act_copy_gateway),
             ("delete", self._act_delete),
             ("snapshots", self._act_snapshots),
+            ("nyx", self._act_nyx),
             ("forget-snapshots", self._act_forget_snapshots),
         ):
             action = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
@@ -297,6 +298,8 @@ class Window(Adw.ApplicationWindow):
         menu.append("Edit…", f"win.edit::{ex.id}")
         menu.append("Duplicate", f"win.duplicate::{ex.id}")
         menu.append("Check the exit", f"win.check::{ex.id}")
+        if selection.supports(ex.endpoint.module):
+            menu.append("Tor monitor (nyx)", f"win.nyx::{ex.id}")
         menu.append("Snapshots…", f"win.snapshots::exit:{ex.id}")
         menu.append("Copy gateway name", f"win.copy-gateway::{ex.id}")
         menu.append("Delete", f"win.delete::{ex.id}")
@@ -611,6 +614,34 @@ class Window(Adw.ApplicationWindow):
                 go()
 
         worker.run(who, ask, lambda exc: self._alert("Could not see who uses the exits", str(exc)))
+
+    def _act_nyx(self, _action, param) -> None:
+        """nyx in a terminal, for an exit that is up."""
+        import shutil
+        import subprocess
+        import sys
+
+        ex = exits.load(param.get_string())
+        if not podman.is_running(paths.gateway_name(ex.id)):
+            self._toast(f"Bring {ex.name} up first")
+            return
+        cmd = [
+            shutil.which("kiwi-proxy") or sys.executable,
+            *([] if shutil.which("kiwi-proxy") else ["-m", "kiwi_proxy"]),
+            "nyx",
+            ex.name,
+        ]
+        for term, flag in (
+            ("ptyxis", "--"),
+            ("kgx", "--"),
+            ("gnome-terminal", "--"),
+            ("konsole", "-e"),
+            ("xterm", "-e"),
+        ):
+            if shutil.which(term):
+                subprocess.Popen([term, flag, *cmd], start_new_session=True)  # noqa: S603
+                return
+        self._toast(f"No terminal found: run kiwi-proxy nyx {ex.name}")
 
     def _repair_on_start(self) -> None:
         """Remove kiwi-proxy's own containers a crash or a reset left behind."""

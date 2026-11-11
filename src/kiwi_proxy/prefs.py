@@ -20,6 +20,8 @@ class Prefs:
     # Countries no Tor exit ever leaves through: "" (none), "five", "nine",
     # "fourteen" (the Eyes groups, kiwi_proxy.selection.EYES).
     tor_never_group: str = ""
+    # The group also as entry (guard) and middle relays, not only as the exit.
+    tor_never_all: bool = False
 
 
 def path():
