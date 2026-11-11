@@ -21,6 +21,16 @@ class FakeVpn(TunnelProvider):
     def config_server(self, text):
         return ("vpn.example.org", 51820)
 
+    def config_sources(self, ctx):
+        from kiwi_proxy.models import Lease
+
+        return [Lease(id="u-1", label="home vpn", detail="WireGuard")]
+
+    def config_from(self, ctx, source):
+        if source not in ("u-1", "home vpn"):
+            raise ProviderError(f"NetworkManager has no WireGuard or OpenVPN connection {source!r}")
+        return "[Interface]\\nPrivateKey = x\\n[Peer]\\nAllowedIPs = 0.0.0.0/0\\nEndpoint = vpn.example.org:51820\\n"
+
     def check_config(self, text):
         if "0.0.0.0/0" not in text:
             raise ProviderError("this config only reaches a subnet; a VPN exit needs a full tunnel")
@@ -104,3 +114,14 @@ def test_a_line_says_only_what_the_label_does_not(new_exit):
         "m", Endpoint(host="10.89.231.9", port=1080, module="mysterium", lease="0xabc")
     )
     assert exits.where(myst) == "mysterium:10.89.231.9:1080 (0xabc)"
+
+
+def test_a_vpn_exit_from_a_networkmanager_connection(vpn_module, capsys):
+    assert cli.main(["module", "sources", vpn_module]) == 0
+    out = capsys.readouterr().out
+    assert "home vpn" in out and "WireGuard" in out and "--from NAME" in out
+    assert cli.main(["add", "home", "--module", vpn_module, "--from", "home vpn"]) == 0
+    ex = exits.find_by_name("home")
+    assert secrets.lookup(ex.id, kind="vpnconfig").startswith("[Interface]")
+    assert cli.main(["add", "x", "--module", vpn_module, "--from", "nope"]) == 1
+    assert "no WireGuard or OpenVPN connection 'nope'" in capsys.readouterr().err

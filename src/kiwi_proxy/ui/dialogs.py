@@ -210,6 +210,14 @@ class ExitEditor(Adw.Dialog):
             title="Config", subtitle=CONFIG_HINT, use_markup=False, visible=False
         )
         self.config_row.set_subtitle_lines(0)
+        self.import_button = Gtk.Button(
+            label="Import…",
+            valign=Gtk.Align.CENTER,
+            tooltip_text="a connection NetworkManager has",
+            visible=False,
+        )
+        self.import_button.connect("clicked", self._on_import)
+        self.config_row.add_suffix(self.import_button)
         config_button = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
         config_button.connect("clicked", self._on_choose_config)
         self.config_row.add_suffix(config_button)
@@ -372,6 +380,9 @@ class ExitEditor(Adw.Dialog):
         self.lease_row.set_title(_noun_of(module).capitalize())
         self.country_row.set_visible(module is not None and not lists and not config)
         self.config_row.set_visible(config)
+        self.import_button.set_visible(
+            config and callable(getattr(providers.get_provider(module), "config_sources", None))
+        )
         if config and self._config_text is None:
             kept = self.ex is not None and self.ex.endpoint.module == module
             self.config_row.set_subtitle(
@@ -496,15 +507,29 @@ class ExitEditor(Adw.Dialog):
         try:
             with open(path, encoding="utf-8") as f:  # noqa: PTH123
                 text = f.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            self._config_text = None
+            self.config_row.set_subtitle(str(exc))
+            return
+        self.use_config_text(text, os.path.splitext(os.path.basename(path))[0])
+
+    def use_config_text(self, text: str, name: str) -> None:
+        try:
             summary = providers.check_config(self.module, text)
-        except (OSError, UnicodeDecodeError, providers.ProviderError) as exc:
+        except providers.ProviderError as exc:
             self._config_text = None
             self.config_row.set_subtitle(str(exc))
             return
         self._config_text = text
         self.config_row.set_subtitle(summary)
         if not self.name_row.get_text().strip():
-            self.name_row.set_text(os.path.splitext(os.path.basename(path))[0])
+            self.name_row.set_text(re.sub(r"[/\s]+", "-", name).strip("-") or name)
+
+    def _on_import(self, *_args) -> None:
+        SourcePicker(self.module, self._imported).present(self)
+
+    def _imported(self, text: str, label: str) -> None:
+        self.use_config_text(text, label)
 
     def _refresh(self, *_args) -> None:
         if hasattr(self, "service_rows"):
@@ -685,6 +710,51 @@ class ExitEditor(Adw.Dialog):
             self._on_saved(saved)
 
         worker.run(work, done, lambda exc: self._say(str(exc)))
+
+
+class SourcePicker(Adw.Dialog):
+    """The configs a module finds on this computer (vpn: NetworkManager's
+    connections); choosing one hands its text back."""
+
+    def __init__(self, module: str, on_pick) -> None:
+        super().__init__(title="Import", content_width=420, content_height=420)
+        self.module, self._on_pick = module, on_pick
+        page = Adw.PreferencesPage()
+        self.group = Adw.PreferencesGroup(description="from NetworkManager")
+        self.status = Adw.ActionRow(title="looking…", use_markup=False)
+        self.group.add(self.status)
+        page.add(self.group)
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        view.set_content(page)
+        self.set_child(view)
+        worker.run(lambda: providers.config_sources(module), self._show, self._failed)
+
+    def _show(self, found) -> None:
+        if not found:
+            self.status.set_title("none found")
+            return
+        self.group.remove(self.status)
+        for src in found:
+            row = Adw.ActionRow(title=src.label, subtitle=src.detail or "", use_markup=False)
+            row.set_activatable(True)
+            row.connect("activated", self._on_row, src)
+            self.group.add(row)
+
+    def _failed(self, exc: Exception) -> None:
+        self.status.set_title(str(exc))
+
+    def _on_row(self, row, src) -> None:
+        row.set_subtitle("reading…")
+
+        def done(text: str) -> None:
+            self.close()
+            self._on_pick(text, src.label)
+
+        def failed(exc: Exception) -> None:
+            row.set_subtitle(str(exc))
+
+        worker.run(lambda: providers.config_from(self.module, src.id), done, failed)
 
 
 class ExitDetails(Adw.Dialog):

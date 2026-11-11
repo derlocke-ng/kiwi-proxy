@@ -151,3 +151,21 @@ def lease_alive(name: str, lease: str | None = None) -> bool:
     if callable(alive):
         return bool(alive(context_for(name, manifest), lease))
     return podman.is_running(container_of(name, lease))
+
+
+def config_sources(name: str) -> list:
+    """Configs the module can find on this machine (vpn: NetworkManager's WireGuard
+    and OpenVPN connections), as Leases: id, label, detail. Empty when it finds none
+    or has no such hook."""
+    prov, manifest = load(name)
+    find = getattr(prov, "config_sources", None)
+    return list(find(context_for(name, manifest))) if callable(find) else []
+
+
+def config_from(name: str, source: str) -> str:
+    """The config text of one of those sources, by id or label."""
+    prov, manifest = load(name)
+    get = getattr(prov, "config_from", None)
+    if not callable(get):
+        raise ProviderError(f"{name} finds no configs on this machine")
+    return get(context_for(name, manifest), source)

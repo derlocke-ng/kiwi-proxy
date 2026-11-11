@@ -22,6 +22,8 @@ from .base import (
 )
 from .loader import (
     check_config,
+    config_from,
+    config_sources,
     container_of,
     context_for,
     discover,
@@ -46,6 +48,8 @@ __all__ = [
     "TunnelProvider",
     "leases_for",
     "check_config",
+    "config_from",
+    "config_sources",
     "container_of",
     "context_for",
     "discover",

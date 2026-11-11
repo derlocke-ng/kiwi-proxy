@@ -16,7 +16,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
-from kiwi_proxy import exits, secrets  # noqa: E402
+from kiwi_proxy import exits, providers, secrets  # noqa: E402
 from kiwi_proxy.models import Endpoint, Expose  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not Gtk.init_check(), reason="no display; GTK cannot initialise")
@@ -720,3 +720,20 @@ def test_new_ip_asks_first_and_says_what_came_back(monkeypatch):
     d._on_renew_answer(None, "renew")
     _spin(1.0)
     assert asked == [ex.id] and d.renew_row.get_subtitle() == "a new IP on port 60000"
+
+
+def test_import_takes_a_networkmanager_connection(monkeypatch):
+    from kiwi_proxy.ui.dialogs import ExitEditor, SourcePicker
+
+    monkeypatch.setenv("KIWI_PROXY_SECRETS", "file")
+    _vpn_module()
+    ed = ExitEditor(None, lambda e: None)
+    ed.source_row.set_selected(1 + ed._modules.index("fakevpn"))
+    _spin()
+    assert ed.import_button.get_visible()
+    picker = SourcePicker("fakevpn", ed._imported)
+    _spin(1.0)
+    picker._on_row(Adw.ActionRow(), providers.config_sources("fakevpn")[0])
+    _spin(1.0)
+    assert ed.config_row.get_subtitle() == "WireGuard · vpn.example.org:51820"
+    assert ed.name_row.get_text() == "home-vpn"  # named after the connection

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.0
+
+- **A VPN exit from a connection NetworkManager already has.** `kiwi-proxy add
+  NAME --module vpn --from "My VPN"`, `kiwi-proxy module sources vpn` to list
+  them, and Import… beside Choose… in the exit dialog. Needs kiwi-plugin-vpn
+  0.5.0. Checked on the VM: the list, an OpenVPN connection carrying traffic, a
+  WireGuard one matching its keyfile, an expired one refused with its date.
+- Module hooks `config_sources` and `config_from`, for any module that finds
+  configs on the machine.
+
 ## 0.14.0
 
 **Several DNS services per exit; the fastest that answers.** An exit's resolver

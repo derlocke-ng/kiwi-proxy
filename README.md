@@ -127,7 +127,9 @@ plain `socks5://` (no `h`) resolves names itself, outside the exit: use
 ### VPN exits (TCP and UDP)
 
 `--module vpn --config FILE` takes your WireGuard `.conf` or OpenVPN `.ovpn` (keys
-inside; in the app: Source vpn → Config: Choose…). The exit's own gluetun owns the
+inside; in the app: Source vpn → Config: Choose…), and `--from NAME` takes a
+connection NetworkManager already has (`kiwi-proxy module sources vpn` lists them;
+in the app: Import…). The exit's own gluetun owns the
 namespace: its firewall is the kill switch, its route the tunnel, and the gateway
 joins it — so a Kiwi Custodia box there sends TCP and UDP through the VPN, and
 nothing leaves when the tunnel is down. A WireGuard config must route `0.0.0.0/0`;

@@ -177,13 +177,18 @@ def cmd_add(a: argparse.Namespace) -> int:
     except ValueError as exc:
         return _fail(str(exc))
     config_text = None
-    if getattr(a, "config", None):
+    if getattr(a, "config", None) or getattr(a, "from_source", None):
         if not a.module:
-            return _fail("--config is for a module exit (--module vpn)")
+            return _fail("--config and --from are for a module exit (--module vpn)")
         try:
-            config_text = Path(a.config).expanduser().read_text()
+            if a.from_source:
+                config_text = providers.config_from(a.module, a.from_source)
+            else:
+                config_text = Path(a.config).expanduser().read_text()
         except (OSError, UnicodeDecodeError) as exc:
             return _fail(f"cannot read {a.config}: {exc}")
+        except providers.ProviderError as exc:
+            return _fail(str(exc))
         try:
             providers.check_config(a.module, config_text)
         except providers.ProviderError as exc:
@@ -657,6 +662,18 @@ def cmd_module(a: argparse.Namespace) -> int:
         line, _ok = _module_status_line(a.name)
         _p(line)
         return 0
+    if cmd == "sources":
+        try:
+            found = providers.config_sources(a.name)
+        except providers.ProviderError as exc:
+            return _fail(str(exc))
+        if not found:
+            _p(f"{a.name}: no configs found on this computer")
+            return 0
+        for src in found:
+            _p(f"{src.label:24} {src.detail or ''}")
+        _p(f"use one: kiwi-proxy add NAME --module {a.name} --from NAME")
+        return 0
     if cmd == "leases":
         prov, manifest = providers.load(a.name)
         ctx = providers.context_for(a.name, manifest)
@@ -1114,6 +1131,13 @@ def _endpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--module", help="a provider module that produces the endpoint (tor, vpn, …)")
     p.add_argument("--lease", help="which of the module's exits (see `module leases`)")
     p.add_argument(
+        "--from",
+        dest="from_source",
+        metavar="NAME",
+        help="a config the module finds on this computer (vpn: a NetworkManager "
+        "connection; `kiwi-proxy module sources vpn` lists them)",
+    )
+    p.add_argument(
         "--config",
         metavar="FILE",
         help="the exit's own config, for a module that takes one "
@@ -1319,6 +1343,10 @@ def build_parser() -> argparse.ArgumentParser:
     mno.add_argument("--limit", type=int, default=40)
     mst = msub.add_parser("settings", help="what a module needs from you, and what it has")
     mst.add_argument("name")
+    msr = msub.add_parser(
+        "sources", help="configs a module finds on this computer (vpn: NetworkManager)"
+    )
+    msr.add_argument("name")
     mcf = msub.add_parser("config", help="give a module its settings (a keystore, a passphrase)")
     mcf.add_argument("name")
     mcf.add_argument("values", nargs="*", metavar="KEY=VALUE")
