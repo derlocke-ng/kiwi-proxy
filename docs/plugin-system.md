@@ -244,6 +244,12 @@ gives the `--publish`, and the module labels its container with
 `kiwi-proxy.expose` so kiwi-proxy starts the tunnel again when the port changes.
 `gateway.is_tunnel(exit)` tells consumers (Kiwi Custodia leaves its tun2socks out).
 
+A module can say something about a running container on the exit: the labels
+`kiwi-proxy.note` (a few words) and `kiwi-proxy.note-help` (the why, behind a (?))
+show in the exit's details, `kiwi-proxy show` and `kiwi-proxy up` while it runs
+(`gateway.provider_note(exit)`). kiwi-plugin-vpn says when it fitted a WireGuard
+config's MTU to the path.
+
 ### A config file per exit
 
 `check_config(text) -> str` makes a module take one (`--config FILE`, the app's

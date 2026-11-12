@@ -757,3 +757,27 @@ def test_a_config_asking_for_a_login_shows_the_rows(tmp_path, monkeypatch):
     ed.login_user_row.set_text("me")
     ed.login_password_row.set_text("s3cret")
     assert ed.collect()["config"].endswith("<auth-user-pass>\nme\ns3cret\n</auth-user-pass>\n")
+
+
+def test_a_tunnel_note_shows_in_the_details_with_its_why(monkeypatch):
+    from kiwi_proxy import gateway, podman
+    from kiwi_proxy.ui.dialogs import ExitDetails
+
+    monkeypatch.setenv("KIWI_PROXY_SECRETS", "file")
+    _vpn_module()
+    ex = exits.create("home-vpn", exits.module_endpoint("fakevpn", lease=None, country=None))
+    monkeypatch.setattr(podman, "available", lambda: True)
+    monkeypatch.setattr(podman, "is_running", lambda name: True)
+    monkeypatch.setattr(podman, "dependents", lambda name: [])
+    monkeypatch.setattr(
+        gateway,
+        "provider_note",
+        lambda e: ("MTU 1316, fitted to the path (config 1352)", "the path takes 1376"),
+    )
+    d = ExitDetails(ex)
+    _pump(lambda: d.note_row.get_visible())
+    assert d.note_row.get_subtitle() == "MTU 1316, fitted to the path (config 1352)"
+    monkeypatch.setattr(gateway, "provider_note", lambda e: None)
+    quiet = ExitDetails(ex)
+    _pump(lambda: quiet.members_row.get_subtitle() == "none")
+    assert not quiet.note_row.get_visible()

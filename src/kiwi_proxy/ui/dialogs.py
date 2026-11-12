@@ -833,6 +833,11 @@ class ExitDetails(Adw.Dialog):
                     toast=toast,
                 )
             )
+            # What the module says about the running tunnel (a VPN's MTU fitted
+            # to the path): filled in with the state, shown only when there is one.
+            self.note_row = _row("Tunnel", "")
+            self.note_row.set_visible(False)
+            up.add(self.note_row)
         if ex.last_exit:
             e = ex.last_exit
             self.seen_row = _row(
@@ -914,15 +919,21 @@ class ExitDetails(Adw.Dialog):
     def _load_state(self, name: str) -> None:
         def work():
             if not podman.available():
-                return False, []
+                return False, [], None
             running = podman.is_running(name)
-            return running, podman.dependents(name) if running else []
+            members = podman.dependents(name) if running else []
+            return running, members, gateway.provider_note(self.ex) if running else None
 
         def done(result) -> None:
-            running, members = result
+            running, members, note = result
             held = " · kept up until taken down" if gateway.held(self.ex.id) else ""
             self.state_row.set_subtitle(("up" if running else "down") + held)
             self.members_row.set_subtitle(", ".join(members) or "none")
+            if note and hasattr(self, "note_row"):
+                self.note_row.set_subtitle(note[0])
+                if note[1]:
+                    explain(self.note_row, note[1], app="providers", anchor="vpn")
+                self.note_row.set_visible(True)
 
         worker.run(work, done)
 

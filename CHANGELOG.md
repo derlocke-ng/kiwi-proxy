@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0
+
+- **What a module says about an exit's running tunnel is shown**: a row in the
+  exit's details with its why behind a (?), a line in `kiwi-proxy show` and in
+  `kiwi-proxy up`. kiwi-plugin-vpn 0.7.0 uses it when it fitted a WireGuard
+  config's MTU to the path ("MTU 1316, fitted to the path (config 1352)").
+  Modules set it as container labels `kiwi-proxy.note` and `kiwi-proxy.note-help`.
+
 ## 0.16.0
 
 - **VPN configs that ask for a username and password.** `kiwi-proxy add NAME

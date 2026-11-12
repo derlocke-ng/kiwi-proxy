@@ -146,3 +146,29 @@ def test_a_config_asking_for_a_login_takes_it_inline(vpn_module, tmp_path, monke
     assert cli.main([*args, "--login-password-stdin"]) == 0
     kept = secrets.lookup(exits.find_by_name("l1").id, kind="vpnconfig")
     assert kept.endswith("<auth-user-pass>\nme\ns3cret\n</auth-user-pass>\n")
+
+
+def test_what_the_module_says_about_its_running_tunnel_is_shown(
+    vpn_module, tmp_path, monkeypatch, capsys
+):
+    from kiwi_proxy import gateway, podman
+
+    conf = tmp_path / "wg0.conf"
+    conf.write_text(FULL)
+    assert cli.main(["add", "v9", "--module", vpn_module, "--config", str(conf)]) == 0
+    ex = exits.find_by_name("v9")
+    tunnel = providers.container_of(vpn_module, ex.id)
+    labels = {
+        paths.NOTE_LABEL: "MTU 1316, fitted to the path (config 1352)",
+        paths.NOTE_HELP_LABEL: "the path takes 1376",
+    }
+    monkeypatch.setattr(podman, "available", lambda: True)
+    monkeypatch.setattr(podman, "exists", lambda name: name == tunnel)
+    monkeypatch.setattr(podman, "is_running", lambda name: name == tunnel)
+    monkeypatch.setattr(podman, "labels", lambda name: labels if name == tunnel else {})
+    assert gateway.provider_note(ex) == (labels[paths.NOTE_LABEL], "the path takes 1376")
+    capsys.readouterr()
+    assert cli.main(["show", "v9"]) == 0
+    assert "tunnel    MTU 1316, fitted to the path (config 1352)" in capsys.readouterr().out
+    monkeypatch.setattr(podman, "is_running", lambda name: False)
+    assert gateway.provider_note(ex) is None  # only while it runs

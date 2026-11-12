@@ -344,12 +344,15 @@ def ensure_provider(ex: Exit) -> EndpointPlan:
         lease += f" ({chosen})"
     if manifest.joins == "tunnel":
         name = providers.container_of(module, selection.lease_for(ex))
+        notes = [f"provider {module}: tunnel up in {name}{lease}"]
+        if note := podman.labels(name).get(paths.NOTE_LABEL):
+            notes.append(f"tunnel: {note}")
         return EndpointPlan(
             ip="",
             port=0,
             network=f"container:{name}",
             info=None,
-            notes=[f"provider {module}: tunnel up in {name}{lease}"],
+            notes=notes,
         )
     return EndpointPlan(
         ip=live.host,
@@ -734,6 +737,23 @@ def provider_alive(ex) -> bool | None:
     if not providers.manages(module):
         return None
     return providers.lease_alive(module, _provider_lease(ex))
+
+
+def provider_note(ex) -> tuple[str, str] | None:
+    """What an exit's module says about its running provider container — a VPN
+    tunnel whose MTU was fitted to the path — as (a few words, the why), or None."""
+    module = ex.endpoint.module
+    if not providers.manages(module) or not podman.available():
+        return None
+    try:
+        name = providers.container_of(module, _provider_lease(ex))
+    except providers.ProviderError:
+        return None
+    if not podman.is_running(name):
+        return None
+    lab = podman.labels(name)
+    note = lab.get(paths.NOTE_LABEL)
+    return (note, lab.get(paths.NOTE_HELP_LABEL, "")) if note else None
 
 
 def exit_logs(ex, lines: int = 200) -> list[tuple[str, str]]:

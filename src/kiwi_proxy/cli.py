@@ -297,6 +297,8 @@ def cmd_show(a: argparse.Namespace) -> int:
                 f"  module    {ex.endpoint.module} lease={ex.endpoint.lease} "
                 f"country={ex.endpoint.country}"
             )
+    if note := gateway.provider_note(ex):
+        _p(f"  tunnel    {note[0]}")
     if ex.socks_auth != "inject":
         _p(
             f"  socks     {ex.socks_auth} (clients' own SOCKS auth goes upstream behind the exit token)"

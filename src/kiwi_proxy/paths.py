@@ -28,6 +28,10 @@ MODULE_LABEL = "kiwi-proxy.module"  # provider module, on a gateway or provider
 LEASE_LABEL = "kiwi-proxy.lease"  # provider lease, on a gateway or provider
 CONFIG_LABEL = "kiwi-proxy.config"  # hash of what a gateway was started with
 EXPOSE_LABEL = "kiwi-proxy.expose"  # host address its SOCKS5 is published on
+# On a provider container: what its module says about it while it runs (a VPN
+# tunnel whose MTU was fitted to the path), a few words and the why behind a (?).
+NOTE_LABEL = "kiwi-proxy.note"
+NOTE_HELP_LABEL = "kiwi-proxy.note-help"
 # On a member (a consumer's container): the image it is committed to before
 # kiwi-proxy removes it along with its gateway — a Kiwi Custodia box's contents.
 SNAPSHOT_LABEL = "kiwi-proxy.snapshot"
