@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.19.0
+
+- **Preferences behind a gear, a slim menu.** The gear beside the menu opens
+  Preferences; the menu keeps only **Take down the exits made here** and **About**.
+  Preferences gains **Modules** (the installed provider modules, Manage… for
+  their settings) and **Maintenance** (Set up environment, Check environment,
+  Check and repair, Tidy up); "Snapshot everything now" is on the Snapshots page.
+- The Preferences dialog widens with its pages, so five titles are not cut.
+
 ## 0.18.1
 
 - A window callback that returned something true was called again and again by

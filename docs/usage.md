@@ -222,7 +222,8 @@ the logs of the exit's containers, and set up and configure provider modules.
 
 ![The details of an exit](images/exit-details.png)
 
-The main menu also has **Preferences** (Ctrl+,) with the DNS, Tor and
-Snapshots pages, **Check environment**, **Check and repair**, **Tidy up unused
-gateways** and **Take down the exits made here**. Small (?) buttons next to
+The gear button opens **Preferences** (Ctrl+,): the DNS, Tor, Modules and
+Snapshots pages, and **Maintenance** with **Set up environment**, **Check
+environment**, **Check and repair** and **Tidy up**. The menu beside it keeps
+**Take down the exits made here** and **About**. Small (?) buttons next to
 settings explain them and link to this documentation.

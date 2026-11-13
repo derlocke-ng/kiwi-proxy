@@ -92,18 +92,16 @@ class Window(Adw.ApplicationWindow):
         new_button.connect("clicked", self._on_new)
         header.pack_start(new_button)
 
+        # The menu keeps what acts on the exits now; setting up, checking and
+        # tidying are in Preferences → Maintenance, behind the gear.
         menu = Gio.Menu()
-        menu.append("Preferences", "win.preferences")
-        menu.append("Provider modules", "win.modules")
-        menu.append("Snapshot everything now", "win.snapshot-all")
-        menu.append("Set up environment", "win.setup")
-        menu.append("Check environment", "win.doctor")
-        menu.append("Check and repair", "win.storage")
-        menu.append("Tidy up unused gateways", "win.reap")
         menu.append("Take down the exits made here", "win.down-all")
         menu.append("About Kiwi Proxy", "app.about")
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
         header.pack_end(menu_button)
+        prefs_button = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="Preferences")
+        prefs_button.connect("clicked", lambda *_: self._open_preferences())
+        header.pack_end(prefs_button)
 
         self.refresh_button = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
         self.refresh_button.connect("clicked", lambda *_: self.refresh())
@@ -843,7 +841,20 @@ class Window(Adw.ApplicationWindow):
             take_all=snapshot_items.take_all,
             take_all_text="every exit and module",
         )
-        snapshot_ui.preferences_dialog(DnsPage(), TorPage(), page).present(self)
+        from .. import providers
+        from .maintenance import MaintenancePage, ModulesPage
+
+        upkeep = MaintenancePage(
+            self,
+            [
+                ("Set up environment", "images, DNS data, modules", "Set up", "win.setup"),
+                ("Check environment", "what is missing", "Check", "win.doctor"),
+                ("Check and repair", "Podman's storage, leftovers", "Open…", "win.storage"),
+                ("Tidy up", "gateways nobody uses", "Tidy up", "win.reap"),
+            ],
+        )
+        modules = ModulesPage(self, sorted(providers.discover()))
+        snapshot_ui.preferences_dialog(DnsPage(), TorPage(), modules, page, upkeep).present(self)
 
     def _snapshot_all(self) -> None:
         """Every exit and every module's settings, now."""

@@ -52,7 +52,7 @@ kiwi-proxy module config 9proxy username=YOU --ask password
 `module settings NAME` lists what the module asks for. `--ask KEY` asks for a
 value without showing what you type. `module status` and `module list` say
 when a module is not configured yet. In the app, the same settings are under
-**Provider modules → Configure…**.
+**Preferences → Modules → Manage… → Configure…**.
 
 ## Choose where an exit leaves
 

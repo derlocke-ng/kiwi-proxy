@@ -579,7 +579,9 @@ def ask_newer(
 
 
 def preferences_dialog(*pages: Adw.PreferencesPage, visible: Adw.PreferencesPage | None = None):
-    dialog = Adw.PreferencesDialog(title="Preferences", content_width=760, content_height=700)
+    # Wide enough that five page titles ("Maintenance" the longest) are not cut.
+    width = max(760, 176 * len(pages))
+    dialog = Adw.PreferencesDialog(title="Preferences", content_width=width, content_height=700)
     for page in pages:
         dialog.add(page)
     if visible is not None:

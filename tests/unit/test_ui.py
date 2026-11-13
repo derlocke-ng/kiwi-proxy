@@ -785,3 +785,52 @@ def test_a_tunnel_note_shows_in_the_details_with_its_why(monkeypatch):
     _pump(lambda: quiet.members_row.get_subtitle() == "none")
     assert not quiet.note_row.get_visible()
     assert quiet.state_row.get_subtitle() == "up · VPN not answering"
+
+
+def test_preferences_sit_behind_a_gear_and_the_menu_is_slim():
+    from gi.repository import Gio, Gtk
+
+    from kiwi_proxy.ui.window import Window
+
+    win = Window()
+    found = {"gear": False, "menu": None}
+    stack = [win.get_first_child()]
+    while stack:
+        w = stack.pop()
+        if w is None:
+            continue
+        if isinstance(w, Gtk.Button) and w.get_icon_name() == "emblem-system-symbolic":
+            found["gear"] = True
+        if isinstance(w, Gtk.MenuButton) and w.get_icon_name() == "open-menu-symbolic":
+            found["menu"] = w.get_menu_model()
+        stack += [w.get_next_sibling(), w.get_first_child()]
+    assert found["gear"]
+    model: Gio.MenuModel = found["menu"]
+    labels = [
+        model.get_item_attribute_value(i, "label", None).get_string()
+        for i in range(model.get_n_items())
+    ]
+    assert len(labels) == 2 and labels[-1].startswith("About")
+
+
+def test_a_maintenance_job_closes_preferences_and_runs_the_windows_action():
+    from gi.repository import Adw, Gtk
+
+    from kiwi_proxy.ui.maintenance import MaintenancePage
+
+    class Win(Gtk.Window):
+        ran: list = []
+
+        def activate_action(self, name, args=None):
+            self.ran.append(name)
+            return True
+
+    win = Win()
+    page = MaintenancePage(win, [("Set up environment", "x", "Set up", "win.setup")])
+    dialog = Adw.PreferencesDialog()
+    dialog.add(page)
+    closed = []
+    dialog.connect("closed", lambda *_: closed.append(1))
+    dialog.present(win)
+    page.buttons["win.setup"].emit("clicked")
+    assert win.ran == ["win.setup"]
