@@ -1,27 +1,41 @@
 # kiwi-proxy on a kiwi-server machine
 
-A node or the master can host exits for the whole mesh: each exit is a kiwi-proxy
-gateway — the same image, the same sealed namespace — whose SOCKS5 is published on
-the host's mesh address. Mesh clients point a browser or a tool at
+A kiwi-server node or master can host exits for the whole mesh, the private
+WireGuard network that connects your kiwi-server machines and devices. Each
+exit is a kiwi-proxy gateway, built from the same image with the same sealed
+network namespace, and its SOCKS5 is published on the host's mesh address.
+Devices in the mesh point a browser or a tool at
 `socks5h://<host mesh address>:<port>`.
 
-The module is [`server-module/kiwi-proxy`](../server-module/kiwi-proxy), in
-kiwi-server's module format (`module.yaml` + compose template). It is not in
-kiwi-server's tree yet; until it is, copy the directory into kiwi-server's
-`modules/` (or kiwi-modules', or the directory `KIWI_MODULES_HOME` names):
+**Status.** The module has not been run on a machine yet. It is checked only
+by a unit test that renders a host with kiwi-server's own renderer (see
+[Development](development.md#tests)).
 
-```sh
-cp -r ~/.local/lib/kiwi-proxy/server-module/kiwi-proxy  ../kiwi-server/modules/
+## Install the module
+
+The module is
+[`server-module/kiwi-proxy`](https://github.com/derlocke-ng/kiwi-proxy/tree/main/server-module/kiwi-proxy),
+written in kiwi-server's module format: a `module.yaml` and a compose
+template. It is not part of
+[kiwi-server](https://kiwi-network.eu/docs/server/) or kiwi-modules yet. Until
+it is, copy the folder into kiwi-server's `modules/` folder, into
+kiwi-modules', or into the folder that `KIWI_MODULES_HOME` names:
+
+```bash
+cp -r ~/.local/lib/kiwi-proxy/server-module/kiwi-proxy ../kiwi-server/modules/
 ```
 
-The machine pulls `ghcr.io/derlocke-ng/kiwi-proxy/gateway` (published by
-`.github/workflows/images.yml`); nothing of kiwi-proxy is installed on it.
+The machine pulls the gateway image `ghcr.io/derlocke-ng/kiwi-proxy/gateway`,
+which `.github/workflows/images.yml` publishes. Nothing of kiwi-proxy itself is
+installed on the machine.
 
-## A host
+## Configure a host
+
+Add `kiwi-proxy` to a host's modules in the fleet file and list its exits:
 
 ```yaml
 hosts:
-  sh3:
+  papaya:
     role: node
     node:
       vpn_ip: 10.8.0.25
@@ -35,47 +49,62 @@ hosts:
           tor:        { via: tor, port: 9050, expose: 1083 }
 ```
 
-| Exit key | Meaning |
-| --- | --- |
-| `host` + `port` | the upstream SOCKS5. A name is resolved once, inside the gateway, before it seals |
-| `via` + `port` | instead of `host`: another module of this stack (its address on the stack network), e.g. `tor` |
-| `expose` | the host port its SOCKS5 is published on (required) |
-| `username` / `password` | the upstream's credentials |
-| `expose_user` / `expose_password` | what the host port demands |
-| `ip` | the gateway's own address on the stack network (default: `.200`, `.201`, … from `ip_offset`) |
-| `adblock` | `false`: no ad-blocking for this exit |
+Each exit takes these keys:
 
-Module settings: `bind` (host address the exits are published on; default the
-mesh address `vpn_ip`, `127.0.0.1` keeps them on the host), `open_firewall`
-(default true: the exit ports are opened in the host firewall), `adblock` (default
-true), `blocklist_urls` (default oisd small), `ip_offset` (default 200), `image`.
+| Key | Meaning |
+|---|---|
+| `host` and `port` | The upstream SOCKS5. A host name is resolved once, inside the gateway, before its firewall closes. |
+| `via` and `port` | Instead of `host`: another module of this host's stack, reached at its address on the stack network, for example `tor`. |
+| `expose` | The host port the exit's SOCKS5 is published on. Required. |
+| `username`, `password` | The upstream's credentials. |
+| `expose_user`, `expose_password` | The user and password the host port demands. |
+| `ip` | The gateway's own address on the stack network. By default the exits take `.200`, `.201` and so on, from `ip_offset`. |
+| `adblock` | `false` turns ad-blocking off for this exit. |
 
-Ad-blocking on a server: nothing on the machine downloads lists, so each gateway
-fetches `blocklist_urls` **through its own exit** after it seals, then daily (every
-ten minutes until the first fetch works), and its forwarder refuses CONNECTs to
-listed names and names under them. Each gateway holds its list in memory, which is
-why the small list is the default here.
+Settings of the module:
 
-## What it renders
+| Setting | Default | Meaning |
+|---|---|---|
+| `bind` | the host's mesh address (`vpn_ip`) | The host address the exits are published on. `127.0.0.1` keeps them on the host. |
+| `open_firewall` | `true` | Opens the exit ports in the host's firewall. |
+| `adblock` | `true` | Refuses names on the blocklists. |
+| `blocklist_urls` | oisd small | The blocklists, separated by spaces. |
+| `ip_offset` | `200` | The first host address on the stack network that the exits use. |
+| `image` | `ghcr.io/derlocke-ng/kiwi-proxy/gateway:latest` | The gateway image. |
 
-One `kn-proxy-<name>` service per exit (quadlet or compose): `cap_drop: ALL` plus
-`NET_ADMIN` and `NET_BIND_SERVICE`, `no-new-privileges`, a static address, the port
-published on `bind`. Credentials are one root-owned 0600 file,
-`<docker_dir>/kn-proxy/credentials`, mounted read-only; each gateway reads its own
-row by `KF_EXIT_NAME`. No password is in a unit or in the environment. DNS is
-remote (names go to the exit — use `socks5h`), filtered by the forwarder when
-`adblock` is on.
+## Ad-blocking on a server
+
+Nothing on the machine downloads blocklists. Each gateway downloads the lists
+in `blocklist_urls` itself, through its own exit, after its firewall is up.
+It repeats this once a day, and every ten minutes until the first download
+works. Its forwarder then refuses connections to the listed names and to every
+name under them. Each gateway keeps its list in memory, which is why the small
+list is the default here.
+
+## What the module creates
+
+The module creates one service per exit, as a quadlet (a systemd unit for a
+Podman container) or in a compose file. Its name is `kn-proxy-<exit name>` on
+a node and `km-proxy-<exit name>` on the master. Each service:
+
+- drops every capability except `NET_ADMIN` and `NET_BIND_SERVICE`, and runs
+  with `no-new-privileges`;
+- has a fixed address on the stack network and publishes its port on `bind`;
+- reads its credentials from one file for all of the host's exits,
+  `<docker_dir>/kn-proxy/credentials` (`km-proxy` on the master), owned by root
+  with mode 0600 and mounted read-only. Each gateway reads its own row by its
+  exit name. No password is in a unit file or in the environment;
+- uses remote DNS: names go to the upstream, so clients must use `socks5h`.
+  The forwarder still refuses listed names when `adblock` is on.
 
 ## Notes
 
-- kiwi-server's `tor` module only accepts `socks_policy_accept` (default the mesh);
-  add the stack subnet so a `via: tor` gateway is let in.
-- Provider plugins (the kiwi-plugin-* modules) are a desktop/podman mechanism and do
-  not run here; on a server the upstream is a remote SOCKS5 or a module of the
-  stack (`tor`, a gluetun `vpn-client` SOCKS proxy).
-- The exits are not passed through the master's reverse proxy or DNS; they are
-  plain TCP on the host's mesh address.
-
-Checked by `tests/unit/test_server_module.py`, which renders a host with
-kiwi-server's own renderer when a kiwi-server checkout is beside this repository
-(or `KIWI_SERVER_SRC` names one). Not yet run on a machine.
+- kiwi-server's `tor` module accepts SOCKS clients only from the networks in
+  `socks_policy_accept`, by default the mesh. Add the stack network, as in the
+  example, so that a `via: tor` gateway is let in.
+- Provider modules (the kiwi-plugin-* apps) work only on a desktop with Podman
+  and do not run here. On a server the upstream is a remote SOCKS5 proxy or a
+  module of the stack, such as `tor` or the SOCKS5 proxy of a gluetun
+  `vpn-client`.
+- The exits do not go through the master's reverse proxy or DNS. They are plain
+  TCP ports on the host's mesh address.

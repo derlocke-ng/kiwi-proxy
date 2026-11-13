@@ -1,7 +1,8 @@
 # Decisions
 
-Why things are the way they are. Each entry is a decision that cost something to
-reach, so that it is not silently undone later. The network entries were kiwi-fox's
+This page is for contributors. It records why kiwi-proxy works the way it does.
+Each entry is a decision that cost something to reach, written down so that it
+is not undone later by accident. The network entries were kiwi-fox's
 before the split and are carried over word for word where they still hold.
 
 ## The split
@@ -47,7 +48,7 @@ its own keyring (kiwi-fox) passes the password to `up()` instead.
 
 ## Network
 
-**The gateway owns the network namespace; members join it.** The kill switch is
+**The gateway creates the network namespace; members join it.** The kill switch is
 then the absence of a route rather than software that has to notice. Measured
 working rootless.
 
@@ -69,10 +70,18 @@ circuit per site, and its SOCKS client offers *only* username/password, so a no-
 answer refuses the connection outright. So passthrough mode accepts the client's
 credentials and sends upstream the exit token prefixed to the client username
 (folded to a hash when the pair would exceed 255 bytes), keeping Tor's
-`IsolateSOCKSAuth` per-site circuits while the token still isolates exits. New
-Identity and New Circuit then work through the SOCKS nonce alone, with no control
-port. Passthrough is an exit setting (`Exit.socks_auth`), set only for a Tor Browser
-profile's exit; every other forwarder is byte-for-byte as before.
+`IsolateSOCKSAuth` per-site circuits while the token still isolates exits.
+Passthrough is an exit setting (`Exit.socks_auth`); every exit on an isolation
+provider (tor) gets it by default, and every other forwarder is byte-for-byte as
+before.
+
+**Tor Browser gets a filtered control port.** New Identity, the circuit display and
+onion-site client keys need Tor's control port. Since 0.10.0 a Tor exit in
+passthrough mode runs a Tor of its own with a password-protected control port, the
+gateway's firewall permits that one port as well, and the forwarder filters it on
+127.0.0.1:9151 the way Whonix's onion-grater does: status and circuit reads, the
+events Tor Browser listens to, New Identity and onion-site client keys pass; what
+would change Tor is refused or answered without reaching it.
 
 **The host listener is the same forwarder, behind its own door.** Publishing an
 exit on the host could have meant a second proxy process outside the namespace.
@@ -87,7 +96,7 @@ isolation key.
 provider — tor, vpn, 9proxy, mysterium — ships in its own repository and installs
 under `modules_dir()`. kiwi-proxy loads a module's `provider.py` by file path, not by
 import name, so a module named `9proxy` (not a legal Python identifier) still loads.
-See `docs/plugin-system.md`.
+See [Writing a provider module](plugin-system.md).
 
 **A local provider meets the gateway on a bridge, never in its netns.** A provider
 that runs its own container needs an unrestricted exit of its own, which the
@@ -104,10 +113,11 @@ the forwarder from inside the gateway, which works the same for every exit.
 **Ad-blocking happens wherever a name shows up.** The resolver blocks for members
 that ask it, but a client on the host port with `socks5h` hands the name to the
 forwarder and never asks a resolver, so the forwarder applies the same list to
-CONNECT-by-name. It is not done in remote mode: remote means the names reach the
-exit untouched, which is what Tor Browser needs (a filtered Tor Browser is one
-that stands out). Each set of lists has its own merged file — one shared file let
-the last exit to start decide every other exit's list.
+CONNECT-by-name. It is done in remote mode too: there every client hands the
+forwarder every name, so the forwarder is the one place a list can apply. An exit
+that should not filter turns its lists off with `--no-blocklist`. Each set of lists
+has its own merged file — one shared file let the last exit to start decide every
+other exit's list.
 
 **A server gateway fetches its own lists through its exit.** A kiwi-server machine
 has no kiwi-proxy installed to download them, and fetching before the firewall is

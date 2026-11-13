@@ -1,5 +1,10 @@
 # Architecture
 
+This page is for contributors and for authors of apps that build on
+kiwi-proxy. It explains how a gateway is built, how it is shared and kept up,
+which labels and names its containers carry, and where kiwi-proxy keeps its
+files. How to use exits is on the page [Using kiwi-proxy](usage.md).
+
 ## Exits and gateways
 
 An **exit** (`models.Exit`, stored by `exits.py`) is a named upstream: an endpoint —
@@ -8,7 +13,7 @@ its SOCKS5 is published on the host, and how the forwarder treats client
 credentials. It is data; nothing runs.
 
 A **gateway** (`gateway.py`) is an exit brought up: one container,
-`kf-gw-<exit id[:12]>`, that owns a network namespace.
+`kf-gw-<exit id[:12]>`, that creates a network namespace for the exit.
 
 ```
                          ┌─────────────────────────── gateway netns ───────────────────────────┐
@@ -22,9 +27,21 @@ A **gateway** (`gateway.py`) is an exit brought up: one container,
 ```
 
 Every byte a member or a host client sends leaves through the one permitted
-destination. A member has no routing table of its own; the host listener is the
-same forwarder on another port. UDP leaves nowhere: no QUIC, no WebRTC media, no
-plaintext DNS.
+destination. A member has no routing table of its own, and the host listener is
+the same forwarder on another port. UDP is not forwarded, so QUIC, WebRTC media
+and plain DNS do not leave the gateway.
+
+Two kinds of exit differ from this picture:
+
+- A **VPN exit** (a tunnel module, `joins="tunnel"`) has no firewall of the
+  gateway's own. The tunnel container creates the namespace, and its firewall
+  is the kill switch, the rule that blocks everything when the tunnel is down.
+  The gateway joins that namespace with `KF_UPSTREAM=direct`, so members of a
+  VPN exit send TCP and UDP through the tunnel. See
+  [Writing a provider module](plugin-system.md#tunnel-modules-joinstunnel).
+- A **Tor exit in passthrough mode** (for Tor Browser) has a second permitted
+  destination: the control port of the exit's own Tor, which the forwarder
+  filters. See [Provider modules](modules.md#tor-browser).
 
 ## Bringing one up
 
@@ -91,7 +108,8 @@ a gateway is shared by every member that joins it afterwards.
 ## Names
 
 Podman object names keep the `kf-` prefix from kiwi-fox: `kf-gw-…`, `kf-prov-…`,
-`kf-creds-…`, `kf-expose-…`, the `kf-providers` bridge on `10.89.231.0/24`. A
+the secrets `kf-creds-…`, `kf-expose-…` and `kf-ctl-…`, and the `kf-providers`
+bridge on `10.89.231.0/24`. A
 rootless podman will not create a second network on a subnet in use, so the bridge
 cannot be renamed without stranding hosts that ran kiwi-fox before the split.
 Images are `kiwi-proxy/gateway:latest` and `kiwi-proxy/<module>:latest`.
@@ -103,10 +121,17 @@ Images are `kiwi-proxy/gateway:latest` and `kiwi-proxy/<module>:latest`.
   exits/<id>/exit.json       an exit (no passwords)
   modules/<name>/            installed provider modules
   modules-state/<name>/      their writable state (VPN config, identities)
-  blocklists/                resolver stamps, blocklists, the merged list
+  blocklists/                resolver stamps, blocklists, the merged lists
   providers.json             measured provider exits
+~/.config/kiwi-proxy/
+  prefs.json                 what new exits start with, the Tor Eyes group
+  snapshots.json             the snapshot folder and its settings
+  window.json                the app's window size
+  secrets/                   passwords, only on a machine without a Secret Service
 $XDG_RUNTIME_DIR/kiwi-proxy/
   exits/<id>/                generated resolver config and resolv.conf for members
   holds/<id>                 exits kept up with `kiwi-proxy up`
-~/.config/kiwi-proxy/secrets/  passwords, only on a machine without a Secret Service
 ```
+
+Without `XDG_RUNTIME_DIR`, the runtime files go to `~/.cache/kiwi-proxy/run/`.
+The `XDG_DATA_HOME` and `XDG_CONFIG_HOME` variables move the other two folders.
