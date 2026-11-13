@@ -1293,7 +1293,9 @@ def build_parser() -> argparse.ArgumentParser:
     nm.add_argument("ref")
     nm.set_defaults(func=cmd_name)
 
-    ck = sub.add_parser("check", help="measure what the world sees through a running exit")
+    ck = sub.add_parser(
+        "check", help="measure what the world sees through an exit (brought up for it if down)"
+    )
     ck.add_argument("ref")
     ck.add_argument("--json", action="store_true")
     ck.set_defaults(func=cmd_check)

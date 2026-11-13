@@ -5,8 +5,8 @@ name: images
 # building them. A desktop builds its own with `kiwi-proxy setup`; nothing here is
 # needed for that.
 #
-# release.yml pushes the v<VERSION> tag with GITHUB_TOKEN, which does not trigger
-# tag workflows, so after a release run this by hand ("Run workflow").
+# It runs for every v* tag the maintainer pushes (release.yml creates no tag),
+# and by hand ("Run workflow") to publish an image again.
 on:
   push:
     tags: ["v*"]

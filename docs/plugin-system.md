@@ -1,27 +1,22 @@
-# Provider plugin system
+# Writing a provider module
 
-kiwi-proxy turns a chosen upstream into a sealed exit. *Where* the exit comes from
-— a plain SOCKS5 you were given, the Tor network, a VPN tunnel, a residential-proxy
-account, a Mysterium node — is the job of a **provider module**.
+This page is for people who write a provider module, or want to know how one
+works. kiwi-proxy turns a chosen upstream into a sealed exit. Where the
+upstream comes from (the Tor network, a VPN tunnel, a residential proxy
+account, a Mysterium node) is the job of a **provider module**. How you use the
+existing modules is on the page [Provider modules](modules.md).
 
-A provider module is a small, self-contained plugin, shipped in its own repository
-and installed through kiwi-updater. kiwi-proxy discovers it, builds its container
-image, brings it up on demand, and points an exit's gateway at it. The suite of
-first-party modules:
+A provider module is a small plugin in its own repository, installed by
+kiwi-updater like any other Kiwi app. kiwi-proxy finds it on disk, builds its
+container image, starts it when an exit needs it, and points the exit's gateway
+at it. The same exit then serves every app that uses kiwi-proxy: a kiwi-fox
+browser, the tool containers of
+[kiwi-pentesting](https://github.com/derlocke-ng/kiwi-pentesting), and programs
+on the host through a published port.
 
-| Module | Repository | Upstream | Account |
-| --- | --- | --- | --- |
-| `tor` | kiwi-plugin-tor | the Tor network | no |
-| `vpn` | kiwi-plugin-vpn | your WireGuard/OpenVPN config, a tunnel the gateway joins | your VPN |
-| `9proxy` | kiwi-plugin-9proxy | 9proxy residential exits | yes |
-| `mysterium` | kiwi-plugin-myst | the Mysterium dVPN | identity (free) |
-
-The contract lived in kiwi-fox until the proxy engine was split out; it is
-unchanged except for the import path (`kiwi_fox.core.…` → `kiwi_proxy.…`), the
-install directory, and the image names. The same exit serves every consumer:
-kiwi-fox's browser, [kiwi-pentesting](https://github.com/derlocke-ng/kiwi-pentesting)'s
-tool containers, host applications through a published port — browsing and testing
-share one IP.
+The contract was part of kiwi-fox before the proxy engine became its own app.
+Only the import path (`kiwi_fox.core.…` → `kiwi_proxy.…`), the install folder
+and the image names changed.
 
 ## The one rule
 
@@ -54,8 +49,8 @@ SOCKS5 on <bridge-ip>:port    permit only <provider-ip>:port
 
 kiwi-proxy resolves the provider container's current bridge address every bring-up
 (it can change across restarts) and passes that literal address to the gateway,
-which permits exactly it. The kill switch is unchanged: if the gateway dies its
-members lose their route; if the provider dies the gateway's one permitted
+which permits exactly it. The kill switch is unchanged: if the gateway stops, its
+members lose their route; if the provider stops, the gateway's one permitted
 destination stops answering.
 
 A plain, already-remote SOCKS5 endpoint touches none of this — its gateway stays
@@ -124,7 +119,7 @@ manifest). Override `ready()` when the upstream has a slow handshake — a VPN t
 or a Tor bootstrap — so kiwi-proxy waits for the SOCKS5 port, not just a running
 container.
 
-### When a tunnel dies
+### When a tunnel stops
 
 A tunnel module's node that loses its session should fail closed and exit (a
 `FATAL` line, then `exit 1`), not try to reconnect under its own kill switch.
@@ -234,7 +229,7 @@ modules does.)
 ### Tunnel modules (`joins="tunnel"`)
 
 A module whose manifest says `joins="tunnel"` (kiwi-plugin-vpn: gluetun, one per
-exit) owns the exit's network namespace. Its container's firewall is the kill
+exit) creates the exit's network namespace. Its container's firewall is the kill
 switch and its route the tunnel; the gateway starts with
 `--network container:<tunnel>` and `KF_UPSTREAM=direct` (no nft flush, the
 forwarder connects targets itself, the resolver rides the tunnel), and members get
@@ -270,9 +265,9 @@ exit. `config_server(text) -> (host, port)` labels the exit by its server.
 - `renew(ctx, *, lease, country) -> lines`: a new IP on request (`kiwi-proxy renew`,
   New IP in the app, which first says it costs one IP).
 
-## Using it
+## Try a module
 
-```sh
+```bash
 kiwi install kiwi-plugin-tor          # installs the module under modules_dir
 kiwi-proxy setup                      # builds kiwi-proxy/tor:latest (among others)
 kiwi-proxy module list                # installed modules
@@ -283,11 +278,13 @@ kiwi-proxy module doctor              # image present? binaries present? running
 ```
 
 kiwi-fox does the same for a browser profile: `kiwi-fox new work --module tor
---country de` registers the exit with kiwi-proxy and launching the profile brings
-it up.
+--country de` registers the exit with kiwi-proxy, and opening the profile
+brings it up.
 
-A provider container is shared across every exit on the same module+lease — from
-every consumer — and is torn down only when no running gateway still uses it.
+A provider container is shared by every exit on the same module and lease,
+whichever app uses it. A Tor container is shared by the exits that ask for the
+same countries and relays. kiwi-proxy stops a provider container only when no
+running gateway uses it any more.
 
 ## Hardening on the shared bridge
 
@@ -315,7 +312,7 @@ neighbour is still dropped. On top of that:
   use no raw sockets, so it is dropped from the gateway's `cap_add`; on the shared L2
   segment this removes an ARP-spoofing capability.
 
-Still open, documented rather than closed:
+Known gaps:
 
 - **`kf-providers` is one shared L2 segment** (it cannot be `--internal` — the
   provider needs its own egress). The nft default-drop is the barrier, the same as

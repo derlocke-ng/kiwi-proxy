@@ -1,9 +1,10 @@
 # Snapshots
 
-Encrypted copies of what the kiwi apps hold, in one folder that a sync client
-(Nextcloud) carries to your other devices. Kiwi Proxy snapshots its exits and the
-settings of its provider modules; Kiwi Fox (profiles) and Kiwi Custodia (boxes)
-use the same folder and the same passphrase through this library.
+A snapshot is an encrypted copy of an exit, or of a provider module's settings,
+in one folder that your sync client (for example Nextcloud) carries to your
+other devices. With snapshots you set up an exit once and use it on every
+device, passwords included. Kiwi Fox (profiles) and Kiwi Custodia (boxes) use
+the same folder and the same passphrase through kiwi-proxy's snapshot library.
 
 The apps never sync anything themselves. They write finished, encrypted files into
 the folder and read them back; moving the folder between devices is the sync
@@ -18,8 +19,9 @@ On the first device:
 kiwi-proxy snapshot setup ~/Nextcloud/kiwi-snapshots
 ```
 
-Choose a passphrase of at least 12 characters. It is kept in this device's GNOME
-keyring; nowhere else. **It cannot be recovered**: without it nothing in the folder
+Choose a passphrase of at least 12 characters. It is kept in this device's
+keyring (see [Encryption](#encryption) for a machine without one) and never in
+the folder. **It cannot be recovered**: without it nothing in the folder
 can be read. Then add the folder to your sync client, and take the first
 snapshots:
 
@@ -42,7 +44,7 @@ device with no exits yet, "Use a snapshot folder" sits under "Add an exit".
 
 | Item | What travels | Left out |
 | --- | --- | --- |
-| Exit | its `exit.json`, the upstream's password, the host listener's password | nothing |
+| Exit | its `exit.json` and every secret kept for it: the upstream's password, the host port's password, a VPN exit's config file, a Tor Browser exit's control port password | nothing |
 | Module settings | the module's state folder, its podman secrets | what the module calls rebuildable (`snapshot_exclude`) |
 
 A module's settings are, for Mysterium, the keystore, the identity and the
@@ -68,8 +70,8 @@ whether it changed since. So a device can tell:
 | --- | --- |
 | up to date | this device's copy is the newest snapshot |
 | changed since its last snapshot | this device's copy is newer |
-| newer snapshot from titan | another device made a newer one from this copy |
-| changed here and on titan | both changed since they parted; you choose |
+| newer snapshot from quince | another device made a newer one from this copy |
+| changed here and on quince | both changed since they parted; you choose |
 | not on this device | only in the folder; Restore brings it here |
 
 Bringing an exit up when the folder holds a newer copy asks first ("Ask before

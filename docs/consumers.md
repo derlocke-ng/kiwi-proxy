@@ -1,8 +1,10 @@
-# Consumers
+# For apps that use exits
 
-What an application using kiwi-proxy can rely on. Two ways in: the Python package
-(`kiwi_proxy`, for apps in the same process — kiwi-fox) and the CLI with `--json`
-(for anything else — kiwi-pentesting, scripts). Both see the same exits and the
+This page is for authors of apps that use kiwi-proxy's exits, which this page
+calls *consumers*: kiwi-fox, kiwi-custodia, kiwi-pentesting, or your own
+scripts. It says what a consumer can rely on. There are two ways in: the Python
+package `kiwi_proxy`, for apps written in Python such as kiwi-fox, and the
+command line with `--json`, for anything else. Both see the same exits and the
 same gateways.
 
 ## The contract
@@ -15,7 +17,7 @@ same gateways.
   mounts `Gateway.resolv_conf` at `/etc/resolv.conf` (`--dns` cannot be combined
   with `--network container:`). In remote mode there is no resolver: use
   `socks5h` so names go to the exit.
-- **Fail closed.** If the gateway dies, members lose connectivity. "Not running" is
+- **Fail closed.** If the gateway stops, members lose their connection. "Not running" is
   a hard stop for a consumer, never a reason to fall back to a direct connection.
 - **Members go with the gateway.** `down`, a replace and `reap` remove whoever
   joined, because podman cannot move a container to another namespace. A member
@@ -63,6 +65,8 @@ gateway.down(ex.id)                               # gone, with everyone inside
 | `gateway.release(exit_id, *, ignore)` / `gateway.down(exit_id)` | let go / tear down |
 | `gateway.is_up(exit_id)`, `gateway.running()` | state; `running()` lists every gateway with its labels |
 | `gateway.measure_exit(name)` | the exit as the world sees it, from inside |
+| `gateway.probe(ex)` | the same for an exit that may be down: brought up for the measurement and taken down again |
+| `gateway.is_tunnel(ex)` | whether the exit is a VPN exit, whose members get TCP and UDP |
 | `gateway.plan(ex, password, measure=)` | the upstream without starting anything (pre-flight) |
 | `gateway.gateway_spec(...)`, `gateway.write_resolv_conf(ex)` | building blocks, for a consumer with special needs |
 | `gateway.reap()`, `gateway.reconcile()` | housekeeping, safe at any time |
@@ -99,8 +103,8 @@ One exit, one gateway, any number of members: two browser profiles on the same
 exit, a pentest tool beside them, a `kiwi-proxy up` for the host port — all in the
 same namespace, behind the same token and the same DNS. `up()` hands the running
 gateway back (`reused=True`); each member calls `release(ex.id, ignore=(me,))` when
-it is done, and the gateway goes with the last one unless held. Members that want
-apart identities use apart exits.
+it is done, and the gateway goes with the last one unless held. Members that must be
+kept apart use separate exits.
 
 ## kiwi-fox
 

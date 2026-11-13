@@ -1,222 +1,80 @@
 # kiwi-proxy
 
-Sealed SOCKS5/VPN exits in rootless Podman — for browsers, pentest tools, host
-applications and kiwi-server machines.
+kiwi-proxy is for people who reach several networks through their own VPN or
+SOCKS5 connections, for example one connection for each client they work for.
+You save each connection as a named **exit** and bring it up only when you need
+it. kiwi-proxy then starts a **gateway** for the exit: a rootless Podman
+container whose network namespace (a separate network stack with its own routes
+and firewall) has exactly one way out, the exit's upstream. Browsers, testing
+tools and other containers join that namespace, and programs on the host can
+use the exit as a SOCKS5 port. If the gateway stops, everything that uses it
+loses its connection, and nothing falls back to a direct connection.
 
-An **exit** is one upstream, by name: a SOCKS5 you were given, or one a provider
-module produces for you — Tor, a VPN tunnel (gluetun), 9proxy, Mysterium. Bringing
-it up makes a **gateway**: a network namespace whose only route is that upstream.
+kiwi-proxy is part of the Kiwi desktop. kiwi-fox (browser profiles),
+kiwi-custodia (distro boxes) and kiwi-pentesting use its exits, and a
+kiwi-server machine can host exits for the whole mesh with the module in this
+repository.
 
-```
-gateway container   owns the network namespace
-                    nftables: default drop, one permitted destination
-                    forwarder 127.0.0.1:1080: adds the upstream's credentials
-                    dnscrypt-proxy 127.0.0.2:53: ad-blocking, upstream through the same exit
-                    host listener :1081 (optional): the same SOCKS5, published on the host
-members             join it with --network container:<gateway> — no routing table of their own
-```
+- Latest release: **v0.17.0**, in the
+  [Kiwi catalog](https://kiwi-network.eu/docs/desktop/catalogs/) (user scope,
+  no root needed)
+- Runs on: Linux with rootless Podman and Python 3.12 or newer. CI runs the
+  unit tests on Ubuntu 24.04 and starts the gateway image with Podman.
+- License: GPL-3.0-or-later
 
-The kill switch is the absence of a route, not software that has to notice: if the
-gateway dies, everything using it loses connectivity.
-
-This is the proxy engine [kiwi-fox](https://github.com/derlocke-ng/kiwi-fox) used to
-carry, split out so it serves more than one browser:
-
-- **kiwi-fox** gives each browser profile an exit; several profiles may share one,
-  and they share its gateway.
-- **[kiwi-pentesting](https://github.com/derlocke-ng/kiwi-pentesting)** joins its tool
-  containers to the same gateway — browsing and testing share one IP.
-- **Anything on the host** — a browser, `curl`, a mail client — uses the exit's
-  published SOCKS5. For people who juggle several VPNs: one exit per VPN, one local
-  port each.
-- **[kiwi-server](https://github.com/derlocke-ng/kiwi-server)** machines host exits for
-  the whole mesh with the module in [`server-module/`](server-module/kiwi-proxy).
+![The list of exits in Kiwi Proxy](data/screenshots/1-exits.png)
 
 ## Install
 
-```
-kiwi install kiwi-proxy      # or: ./install.sh install
-kiwi-proxy setup             # gateway image, DNS data, provider module images
-```
-
-`kiwi install kiwi-fox` brings it along; kiwi-fox's own `setup` runs this one.
-
-## The app
-
-`kiwi-proxy-gui` ("Kiwi Proxy" in your app grid) does everything below without a
-terminal: add and edit exits — a SOCKS5 you were given or a provider module — bring
-them up and down, offer one as a SOCKS5 port on this computer and copy its address,
-check what the world sees through it, see who joined a gateway, set up modules.
-
-![Exits](data/screenshots/1-exits.png)
-
-![A new exit](data/screenshots/2-new-exit.png)
-
-![DNS and ad-blocking](data/screenshots/4-dns-adblock.png)
-
-## Use
-
-```
-kiwi-proxy add work socks5://user:pass@host:port   # a plain upstream
-kiwi-proxy add tor-de --module tor --country de     # or one a module produces
-kiwi-proxy add home --module vpn --config ~/wg0.conf --expose 1081   # your own VPN
-kiwi-proxy add us-1 --module 9proxy --country us   # a 9proxy residential IP
-kiwi-proxy list
-kiwi-proxy up mullvad-se          # headless: the gateway and nothing else, kept up
-kiwi-proxy check mullvad-se       # what the world sees through it
-kiwi-proxy down mullvad-se
+```bash
+kiwi install kiwi-proxy
+kiwi-proxy setup
 ```
 
-Endpoint formats: `socks5://user:pass@host:port`, `http://…`, `https://…`, and the
-vendor paste format `host:port:user:pass`. Passwords go to the Secret Service
-(`secret-tool`), or to 0600 files on a machine without one.
+`kiwi install` puts kiwi-proxy under `~/.local` and adds the `kiwi-proxy`
+command, the **Kiwi Proxy** app and a few systemd user units. Nothing is
+installed as root. `kiwi-proxy setup` builds the gateway image, downloads the
+DNS data and prepares the images of the provider modules you installed. Run it
+once after the install. From a checkout, `./install.sh install` does the same
+as `kiwi install`. The [install page](docs/install.md) lists what kiwi-proxy
+needs and every file it writes.
 
-### On the host
-
-`--expose [ADDR:]PORT` publishes the exit's SOCKS5 on the host, `127.0.0.1` unless
-you say otherwise. Point anything at `socks5h://127.0.0.1:1081` — the `h` sends
-names to the exit too, so DNS does not leak around it.
-
-```
-kiwi-proxy add se socks5://10.64.0.1:1080 --expose 1081
-kiwi-proxy add nl socks5://10.65.0.1:1080 --expose 1082
-kiwi-proxy up se && kiwi-proxy up nl
-curl --proxy socks5h://127.0.0.1:1082 https://ifconfig.co/json
-systemctl --user enable --now kiwi-proxy@se     # up at every login
-```
-
-An address other machines can reach needs `--expose-user NAME` (you are asked for a
-password; the listener then demands it), or `--expose-open` to say you mean it.
-
-### Joining a gateway
-
-```
-kiwi-proxy up work --json   # {"name": "kf-gw-…", "network": "container:kf-gw-…", "forwarder": "127.0.0.1:1080", …}
-podman run --rm --network "container:$(kiwi-proxy name work)" \
-    docker.io/curlimages/curl --socks5-hostname 127.0.0.1:1080 https://ifconfig.co/json
-```
-
-`kiwi-proxy ps` lists every gateway, whichever app started it. A gateway a consumer
-brought up goes when the last member leaves; one brought up with `kiwi-proxy up`
-stays until `kiwi-proxy down`.
-
-### DNS and ad-blocking
-
-By default an exit resolves names in its own gateway (dnscrypt-proxy, DoH through
-the same exit), asking Quad9, Mullvad, Cloudflare and Google and using the fastest
-that answers — one that is down costs nothing (`--upstream quad9,mullvad` for
-fewer, or the switches in the app). It refuses names on its blocklists — oisd big unless you pick
-others (`--blocklist oisd-small`, `--blocklist oisd-nsfw`, `--no-blocklist`, or the
-switches in the app; Preferences → DNS sets what a new exit starts with). The
-block applies wherever a name shows up:
-
-| Who | How it is blocked |
-| --- | --- |
-| a container that joined the gateway | its resolver (`/etc/resolv.conf` → 127.0.0.2) answers REFUSED |
-| an app on the host port with `socks5h://` | the forwarder refuses the CONNECT for that name |
-| a kiwi-server exit | the gateway fetches its lists through its own exit, daily, and the forwarder refuses |
-
-`--dns remote` hands every name to the exit untouched — no resolver in the
-gateway, which is what Tor needs (`.onion` resolves only there). The forwarder
-still refuses listed names, since a remote-DNS client hands it every one; so
-ad-blocking holds in both modes, and `--no-blocklist` turns it off. An app using
-plain `socks5://` (no `h`) resolves names itself, outside the exit: use
-`socks5h`. The lists refresh daily (`kiwi-proxy-blocklists.timer`, or
-`kiwi-proxy dns update`); running gateways pick the new list up by themselves.
-
-### VPN exits (TCP and UDP)
-
-`--module vpn --config FILE` takes your WireGuard `.conf` or OpenVPN `.ovpn` (keys
-inside; in the app: Source vpn → Config: Choose…), and `--from NAME` takes a
-connection NetworkManager already has (`kiwi-proxy module sources vpn` lists them;
-in the app: Import…). A config that asks for a username and password takes
-`--login USER` (or the rows in the app); the login is kept inline in the exit's
-secret config. The exit's own gluetun owns the
-namespace: its firewall is the kill switch, its route the tunnel, and the gateway
-joins it — so a Kiwi Custodia box there sends TCP and UDP through the VPN, and
-nothing leaves when the tunnel is down. A WireGuard config must route `0.0.0.0/0`;
-one key works in one place at a time, so an exit does not start while another is
-up with its key. As many VPN exits as you like, each with its own tunnel. A
-WireGuard MTU too big for the path from this computer to the server is fitted
-when the tunnel starts; the exit's details (and `kiwi-proxy show`) say so.
-
-### 9proxy: one daemon, ten exits
-
-`kiwi-proxy module config 9proxy username=YOU --ask password` once; then each
-`--module 9proxy` exit gets one of the daemon's ten ports, one residential IP each.
-An exit starts on an IP from 9proxy's today's list (no new IP); a new one only when
-you ask — `kiwi-proxy renew EXIT`, or New IP in the exit's details, which says it
-uses one IP from your balance.
-
-### Tor Browser
-
-Tor Browser puts a SOCKS username and password on every request to get a circuit
-per site. `--socks-auth passthrough` carries them through, behind the exit's own
-token, so Tor's `IsolateSOCKSAuth` keeps per-site circuits while exits stay apart.
-An exit on the tor module is passthrough by default: a member without SOCKS
-credentials still gets the exit's token, so the same exit serves Tor Browser, a
-Camoufox profile and a tool alike.
-
-### Snapshots, for your other devices
-
-Exits and module settings, passwords included, go into one encrypted folder that
-your sync client (Nextcloud) carries to your other devices; Kiwi Fox and Kiwi
-Custodia use the same folder. The passphrase is entered once per device and kept in
-its keyring. Snapshots are taken when you add or change an exit, and on demand.
+## Quick start
 
 ```bash
-kiwi-proxy snapshot setup ~/Nextcloud/kiwi-snapshots
-kiwi-proxy snapshot list
-kiwi-proxy snapshot restore mullvad-se
+kiwi-proxy add work socks5://user:pass@proxy.example.net:1080 --expose 1081
+kiwi-proxy up work
+curl --proxy socks5h://127.0.0.1:1081 https://ifconfig.co/json
+kiwi-proxy down work
 ```
 
-In the app: Preferences (Ctrl+,) → Snapshots. See
-[docs/snapshots.md](docs/snapshots.md), which also says how to open a snapshot by
-hand with gpg.
-
-## Provider modules
-
-Each module is its own kiwi app. Most expose plain SOCKS5, which the gateway reaches
-over a private bridge, permitting exactly one destination; a VPN is a tunnel the
-gateway joins instead.
-
-| Module | Repository | Upstream | Account |
-| --- | --- | --- | --- |
-| `tor` | kiwi-plugin-tor | the Tor network | no |
-| `vpn` | kiwi-plugin-vpn | your WireGuard/OpenVPN config, TCP and UDP (gluetun) | your VPN |
-| `9proxy` | kiwi-plugin-9proxy | 9proxy residential IPs, ten exits per account | yes |
-| `mysterium` | kiwi-plugin-myst | the Mysterium dVPN | identity (free) |
-
-```
-kiwi install kiwi-plugin-vpn
-kiwi-proxy module list            # `module leases vpn` for exits, `module doctor`
-kiwi-proxy module config mysterium keystore=~/0x….json --ask passphrase   # what a module needs from you
-kiwi-proxy module countries tor                                          # where a module can exit, with counts
-kiwi-proxy module leases mysterium --country DE --kind residential      # providers there, best first (--search cbb6)
-```
-
-A module that needs something from you — Mysterium's identity keystore and its
-passphrase — says so in `module settings NAME`; the app asks for the same under
-*Provider modules → Configure…*.
-
-See [docs/plugin-system.md](docs/plugin-system.md) for how modules work and how to
-write one.
+`add` saves the exit and stores the password in your keyring, or in a file
+only you can read on a machine without one. `up` starts the
+exit's gateway, publishes its SOCKS5 port on `127.0.0.1:1081` and keeps it
+running until `down`. The `h` in `socks5h` makes `curl` send host names
+through the exit as well, so DNS queries cannot bypass it. The app,
+`kiwi-proxy-gui` (**Kiwi Proxy** in your app grid), does the same without a
+terminal.
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — gateways, members, the host listener, providers
-- [docs/consumers.md](docs/consumers.md) — the API kiwi-fox, kiwi-pentesting and others use
-- [docs/plugin-system.md](docs/plugin-system.md) — the provider contract
-- [docs/snapshots.md](docs/snapshots.md) — snapshots for other devices: the folder, the encryption, which copy is newer
-- [docs/kiwi-server.md](docs/kiwi-server.md) — hosting exits on a node or the master
-- [docs/decisions.md](docs/decisions.md) — why things are the way they are
+| Page | What it covers |
+|---|---|
+| [Install](docs/install.md) | requirements, install, first setup, update, uninstall |
+| [Using kiwi-proxy](docs/usage.md) | exits, every command, host ports, the app |
+| [Provider modules](docs/modules.md) | Tor, VPN, 9proxy and Mysterium exits |
+| [DNS and ad-blocking](docs/dns.md) | how an exit resolves names and which it refuses |
+| [Snapshots](docs/snapshots.md) | your exits on your other devices, encrypted |
+| [On a kiwi-server machine](docs/kiwi-server.md) | exits for the whole mesh |
+| [For apps that use exits](docs/consumers.md) | the Python API and `--json` for other apps |
+| [Writing a provider module](docs/plugin-system.md) | the contract a module keeps |
+| [Architecture](docs/architecture.md) | gateways, members, labels, files |
+| [Decisions](docs/decisions.md) | why things are the way they are |
+| [Development](docs/development.md) | tests, CI, releases |
 
-## Requirements
-
-Rootless Podman, Python 3.12+ with pydantic. GTK 4 + libadwaita (PyGObject) for
-the app. `secret-tool` when there is a desktop keyring. kiwi-server machines need only their stack runtime: they pull the gateway
-image from `ghcr.io/derlocke-ng/kiwi-proxy/gateway`.
+The same pages are on
+[kiwi-network.eu](https://kiwi-network.eu/docs/clients/kiwi-proxy/).
 
 ## License
 
-GPL-3.0-or-later — see [LICENSE](LICENSE).
+GPL-3.0-or-later; see [LICENSE](LICENSE).
