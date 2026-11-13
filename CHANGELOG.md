@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.1
+
+- A window callback that returned something true was called again and again by
+  GLib (the background worker handed results over with `GLib.idle_add`). Every
+  callback now runs once. Found in Kiwi Fox, where the engines page rebuilt
+  itself in a loop after an install; Kiwi Proxy's worker had the same flaw.
+
 ## 0.18.0
 
 - **A VPN exit whose server stops answering says so**: "VPN not answering" on
