@@ -10,4 +10,5 @@ docs/testbed.local.md
 # Working notes for the coding agent, like CLAUDE.md in the other kiwi apps.
 kiwi-proxy.md
 CLAUDE.md
-.claude/
+.claude/*
+!.claude/skills/
