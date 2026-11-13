@@ -138,7 +138,10 @@ nothing leaves when the tunnel is down. A WireGuard config must route `0.0.0.0/0
 one key works in one place at a time, so an exit does not start while another is
 up with its key. As many VPN exits as you like, each with its own tunnel. A
 WireGuard MTU too big for the path from this computer to the server is fitted
-when the tunnel starts; the exit's details (and `kiwi-proxy show`) say so.
+when the tunnel starts; the exit's details (and `kiwi-proxy show`) say so. When
+the VPN server stops answering, the tunnel reconnects by itself (seconds after the
+server is back, members kept, nothing leaking) and the exit says "VPN not
+answering" meanwhile.
 
 ### 9proxy: one daemon, ten exits
 

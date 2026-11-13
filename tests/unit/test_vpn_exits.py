@@ -172,3 +172,47 @@ def test_what_the_module_says_about_its_running_tunnel_is_shown(
     assert "tunnel    MTU 1316, fitted to the path (config 1352)" in capsys.readouterr().out
     monkeypatch.setattr(podman, "is_running", lambda name: False)
     assert gateway.provider_note(ex) is None  # only while it runs
+
+
+def test_whether_a_vpn_tunnel_carries_traffic_is_asked_inside_it(vpn_module, tmp_path, monkeypatch):
+    import subprocess
+
+    from kiwi_proxy import gateway, podman
+
+    conf = tmp_path / "wg0.conf"
+    conf.write_text(FULL)
+    assert cli.main(["add", "v10", "--module", vpn_module, "--config", str(conf)]) == 0
+    ex = exits.find_by_name("v10")
+    gw = paths.gateway_name(ex.id)
+    asked: list[list[str]] = []
+    answer = {"rc": 0}
+
+    def exec_(name, args, timeout=60):
+        asked.append([name, *args])
+        return subprocess.CompletedProcess(args, answer["rc"], "", "")
+
+    monkeypatch.setattr(podman, "is_running", lambda name: name == gw)
+    monkeypatch.setattr(podman, "exec_", exec_)
+    gateway._tunnel_checked.clear()
+    assert gateway.tunnel_passes(ex) is True
+    assert asked[0][0] == gw and asked[0][1] == "python3"  # in the exit's own namespace
+    assert asked[0][-2:] == ["1.1.1.1", "9.9.9.9"]
+    answer["rc"] = 1
+    assert gateway.tunnel_passes(ex) is True  # a fresh answer is reused
+    assert len(asked) == 1
+    assert gateway.tunnel_passes(ex, max_age=0) is False
+    capsys_lines = []
+    monkeypatch.setattr(cli, "_p", lambda line="": capsys_lines.append(line))
+    assert cli.main(["show", "v10"]) == 0
+    assert any("the VPN is not answering" in ln for ln in capsys_lines)
+    monkeypatch.setattr(podman, "is_running", lambda name: False)
+    assert gateway.tunnel_passes(ex, max_age=0) is None  # not running: nothing to say
+
+
+def test_an_exit_that_is_not_a_tunnel_is_not_asked(monkeypatch):
+    from kiwi_proxy import gateway, podman
+    from kiwi_proxy.models import Endpoint
+
+    ex = exits.create("plain", Endpoint(host="127.0.0.1", port=1080))
+    monkeypatch.setattr(podman, "exec_", lambda *a, **k: pytest.fail("asked a plain exit"))
+    assert gateway.tunnel_passes(ex, max_age=0) is None

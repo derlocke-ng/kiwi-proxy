@@ -919,15 +919,21 @@ class ExitDetails(Adw.Dialog):
     def _load_state(self, name: str) -> None:
         def work():
             if not podman.available():
-                return False, [], None
+                return False, [], None, None
             running = podman.is_running(name)
-            members = podman.dependents(name) if running else []
-            return running, members, gateway.provider_note(self.ex) if running else None
+            if not running:
+                return False, [], None, None
+            members = podman.dependents(name)
+            note = gateway.provider_note(self.ex)
+            return True, members, note, gateway.tunnel_passes(self.ex, max_age=0)
 
         def done(result) -> None:
-            running, members, note = result
+            running, members, note, passes = result
             held = " · kept up until taken down" if gateway.held(self.ex.id) else ""
-            self.state_row.set_subtitle(("up" if running else "down") + held)
+            silent = " · VPN not answering" if passes is False else ""
+            self.state_row.set_subtitle(("up" if running else "down") + silent + held)
+            if passes is False:
+                explain(self.state_row, gateway.TUNNEL_SILENT_HINT, app="providers", anchor="vpn")
             self.members_row.set_subtitle(", ".join(members) or "none")
             if note and hasattr(self, "note_row"):
                 self.note_row.set_subtitle(note[0])

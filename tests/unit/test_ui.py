@@ -774,10 +774,14 @@ def test_a_tunnel_note_shows_in_the_details_with_its_why(monkeypatch):
         "provider_note",
         lambda e: ("MTU 1316, fitted to the path (config 1352)", "the path takes 1376"),
     )
+    monkeypatch.setattr(gateway, "tunnel_passes", lambda e, max_age=15.0: True)
     d = ExitDetails(ex)
     _pump(lambda: d.note_row.get_visible())
     assert d.note_row.get_subtitle() == "MTU 1316, fitted to the path (config 1352)"
+    assert d.state_row.get_subtitle() == "up"
     monkeypatch.setattr(gateway, "provider_note", lambda e: None)
+    monkeypatch.setattr(gateway, "tunnel_passes", lambda e, max_age=15.0: False)
     quiet = ExitDetails(ex)
     _pump(lambda: quiet.members_row.get_subtitle() == "none")
     assert not quiet.note_row.get_visible()
+    assert quiet.state_row.get_subtitle() == "up · VPN not answering"

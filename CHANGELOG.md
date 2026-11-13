@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.18.0
+
+- **A VPN exit whose server stops answering says so**: "VPN not answering" on
+  its row and in its details (with a (?)), and in `kiwi-proxy show`. Kiwi Proxy
+  asks the tunnel itself every 15 s or so: a TLS handshake with 1.1.1.1 or 9.9.9.9
+  from inside the exit's namespace. Nothing else needs doing: measured on the dev
+  VM with the server unreachable for three minutes, WireGuard was back 2 s and
+  OpenVPN 14 s after it answered again, by themselves, with the exit's members
+  kept and nothing leaking. gluetun's own check noticed only after about three
+  minutes and stayed "failed" 45 s after traffic flowed, so it is not what the
+  app shows. `gateway.tunnel_passes(exit)` for consumers.
+
 ## 0.17.0
 
 - **What a module says about an exit's running tunnel is shown**: a row in the
