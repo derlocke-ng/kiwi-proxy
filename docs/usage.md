@@ -199,6 +199,9 @@ An exit can be named by its name or by the first characters of its id.
 
 - `kiwi-proxy doctor` says what is missing.
 - `kiwi-proxy logs EXIT` shows why a gateway or its provider did not start.
+- **VPN not answering** on a VPN exit means its server does not answer right
+  now. The tunnel reconnects by itself once the server answers again, and
+  nothing leaves the exit meanwhile. See [VPN exits](modules.md#vpn-exits).
 - `kiwi-proxy storage check` runs Podman's quick storage check and names every
   broken container and the app it belongs to. `kiwi-proxy storage repair`
   removes the broken Kiwi containers, and other containers only with

@@ -299,6 +299,8 @@ def cmd_show(a: argparse.Namespace) -> int:
             )
     if note := gateway.provider_note(ex):
         _p(f"  tunnel    {note[0]}")
+    if gateway.tunnel_passes(ex, max_age=0) is False:
+        _p("  tunnel    the VPN is not answering; it comes back by itself when the server does")
     if ex.socks_auth != "inject":
         _p(
             f"  socks     {ex.socks_auth} (clients' own SOCKS auth goes upstream behind the exit token)"

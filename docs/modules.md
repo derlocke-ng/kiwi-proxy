@@ -131,13 +131,30 @@ Each VPN exit runs its own gluetun container, and that container creates the
 exit's network namespace. Its firewall is the kill switch, the rule that blocks
 all traffic when the tunnel is down. Its only route is the tunnel. The gateway
 joins this namespace, so members of a VPN exit send TCP and UDP through the
-VPN, and nothing leaves when the tunnel is down. If the tunnel stops, the exit
-is taken down or started over, never left open.
+VPN, and nothing leaves when the tunnel is down.
+
+When the VPN server stops answering, the tunnel reconnects by itself, in the
+same namespace: members keep their place, and nothing leaves meanwhile. On the
+test machine, after the server had been unreachable for three minutes,
+WireGuard was back 2 seconds and OpenVPN 14 seconds after it answered again.
+Meanwhile the exit says **VPN not answering**: its row and details in the app,
+`kiwi-proxy show`, and the rows of kiwi-fox profiles and kiwi-custodia boxes on
+it. kiwi-proxy asks the tunnel itself, with a TLS handshake to 1.1.1.1 or
+9.9.9.9 from inside the namespace, about every 15 seconds while a window is
+open. Only when the tunnel's container itself ends is the exit taken down, never
+left open; the next `up` starts a new tunnel.
+
+A WireGuard config's `MTU` suits the network it was made on. Before the tunnel
+starts, the module measures the path to the server. If the config's MTU plus
+WireGuard's 60 bytes (80 over IPv6) does not fit, the tunnel uses the largest
+MTU that does; the exit's details and `kiwi-proxy show` say so ("MTU 1316,
+fitted to the path (config 1352)"), and the stored config stays as it is. A
+config without an `MTU` line is left to gluetun, which measures the path
+itself.
 
 A VPN exit always resolves names in its gateway; `--dns remote` is refused. A
 host port (`--expose`) works on a VPN exit too, and changing it starts the
-tunnel again. When the module fitted a WireGuard config's MTU to the path, the
-exit's details and `kiwi-proxy show` say so.
+tunnel again.
 
 The vpn module refuses to start an exit while another exit with the same
 WireGuard key is up, because one key works in one place at a time. You can

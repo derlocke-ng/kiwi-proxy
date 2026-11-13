@@ -67,6 +67,8 @@ gateway.down(ex.id)                               # gone, with everyone inside
 | `gateway.measure_exit(name)` | the exit as the world sees it, from inside |
 | `gateway.probe(ex)` | the same for an exit that may be down: brought up for the measurement and taken down again |
 | `gateway.is_tunnel(ex)` | whether the exit is a VPN exit, whose members get TCP and UDP |
+| `gateway.tunnel_passes(ex, max_age=15)` | for a running VPN exit, whether its tunnel carries traffic now (`None` for other exits); answers younger than `max_age` seconds are reused |
+| `gateway.provider_note(ex)` | what the exit's module says about its running container, as `(words, why)`, e.g. a fitted MTU; `None` when it says nothing |
 | `gateway.plan(ex, password, measure=)` | the upstream without starting anything (pre-flight) |
 | `gateway.gateway_spec(...)`, `gateway.write_resolv_conf(ex)` | building blocks, for a consumer with special needs |
 | `gateway.reap()`, `gateway.reconcile()` | housekeeping, safe at any time |

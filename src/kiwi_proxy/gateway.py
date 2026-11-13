@@ -24,6 +24,8 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import hashlib
+import subprocess
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -754,6 +756,60 @@ def provider_note(ex) -> tuple[str, str] | None:
     lab = podman.labels(name)
     note = lab.get(paths.NOTE_LABEL)
     return (note, lab.get(paths.NOTE_HELP_LABEL, "")) if note else None
+
+
+# Whether a VPN exit's tunnel carries traffic right now: a TLS handshake from
+# inside its namespace (the gateway shares it) with the addresses gluetun's own
+# check dials. TLS, not just a connect: the server's certificate comes back in
+# full-size packets, so a tunnel whose MTU is too big fails it too. Measured on
+# the dev VM (2026-11-13): after a 3-minute outage of the server, WireGuard was
+# back 2 s and OpenVPN 14 s after it answered again, by themselves, nothing
+# leaking meanwhile; gluetun's own check noticed only after ~3 minutes and still
+# said "failed" 45 s after traffic flowed. This lets the app say so meanwhile.
+TUNNEL_PROBE_ADDRESSES = ("1.1.1.1", "9.9.9.9")
+_TUNNEL_PROBE = """
+import socket, ssl, sys
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+for host in sys.argv[1:]:
+    try:
+        with socket.create_connection((host, 443), 4) as s, ctx.wrap_socket(s):
+            sys.exit(0)
+    except OSError:
+        pass
+sys.exit(1)
+"""
+_tunnel_checked: dict[str, tuple[float, bool]] = {}
+
+
+def tunnel_passes(ex, *, max_age: float = 15.0) -> bool | None:
+    """Does a running VPN exit's tunnel carry traffic now? None for an exit that
+    is not a tunnel exit, or whose gateway is not running. Answers younger than
+    `max_age` seconds are reused: a window asks every few seconds."""
+    if tunnel_of(ex) is None:
+        return None
+    now = time.monotonic()
+    if (hit := _tunnel_checked.get(ex.id)) and now - hit[0] < max_age:
+        return hit[1]
+    name = paths.gateway_name(ex.id)
+    if not podman.is_running(name):
+        _tunnel_checked.pop(ex.id, None)
+        return None
+    try:
+        args = ["python3", "-c", _TUNNEL_PROBE, *TUNNEL_PROBE_ADDRESSES]
+        passes = podman.exec_(name, args, timeout=15).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        passes = False
+    _tunnel_checked[ex.id] = (time.monotonic(), passes)
+    return passes
+
+
+TUNNEL_SILENT_HINT = (
+    "The VPN server has not answered for a moment. WireGuard and OpenVPN keep "
+    "trying and come back by themselves once it answers again; nothing leaves the "
+    "exit meanwhile."
+)
 
 
 def exit_logs(ex, lines: int = 200) -> list[tuple[str, str]]:

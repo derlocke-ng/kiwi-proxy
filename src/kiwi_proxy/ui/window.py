@@ -247,7 +247,11 @@ class Window(Adw.ApplicationWindow):
                 if not g["exit_id"] or g["state"] != "running":
                     continue
                 try:
-                    g["provider_alive"] = gateway.provider_alive(exits.load(g["exit_id"]))
+                    ex = exits.load(g["exit_id"])
+                    g["provider_alive"] = gateway.provider_alive(ex)
+                    g["tunnel_passes"] = (
+                        gateway.tunnel_passes(ex) if g["provider_alive"] is not False else None
+                    )
                 except exits.ExitError:
                     g["provider_alive"] = None
                 found[g["exit_id"]] = g
@@ -325,6 +329,8 @@ class Window(Adw.ApplicationWindow):
             )
         if up and self._up.get(ex.id, {}).get("provider_alive") is False:
             bits.append("provider gone — see its logs")
+        elif up and self._up.get(ex.id, {}).get("tunnel_passes") is False:
+            bits.append("VPN not answering")
         if ex.owner:
             bits.append(f"from {ex.owner}")
         rel = self._relations.get(ex.id)
