@@ -246,11 +246,80 @@ def parse_geo(text: str) -> ExitInfo:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise EndpointError(f"geo endpoint returned unparseable data: {text[:120]!r}") from exc
+    ip = data.get("ip") or data.get("query") or ""
+    if ip and (where := coords_in(data)):
+        remember_coords(ip, where)
     return ExitInfo(
-        ip=data.get("ip") or data.get("query") or "",
+        ip=ip,
         country=data.get("country_iso") or data.get("countryCode") or data.get("country"),
         city=data.get("city"),
         timezone=data.get("time_zone") or data.get("timezone"),
         asn=str(data.get("asn") or data.get("as") or data.get("org") or "") or None,
         seen=dt.datetime.now(dt.UTC),
     )
+
+
+# --------------------------------------------------------------- coordinates
+# Where an exit's address is, as the same ip-echo answer says, for a browser
+# whose geolocation should match its IP (kiwi-fox). Kept beside the exit records,
+# not in them: ExitInfo forbids unknown fields, and an older kiwi-proxy reading a
+# record (a snapshot from another device) must not fail on new ones.
+COORDS_KEPT = 256
+
+
+def coords_in(data: dict) -> tuple[float, float] | None:
+    """Latitude and longitude from an ifconfig.co / am.i.mullvad.net answer
+    (`latitude`, `longitude`) or an ipinfo.io one (`loc`: "lat,lon")."""
+    try:
+        if data.get("latitude") is not None and data.get("longitude") is not None:
+            lat, lon = float(data["latitude"]), float(data["longitude"])
+        elif isinstance(data.get("loc"), str) and "," in data["loc"]:
+            lat, lon = (float(x) for x in data["loc"].split(",", 1))
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat, lon) == (0.0, 0.0):
+        return None
+    return lat, lon
+
+
+def _coords_file():
+    from . import paths
+
+    return paths.cache_dir() / "exit-coords.json"
+
+
+def _coords_read() -> dict:
+    try:
+        found = json.loads(_coords_file().read_text())
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def remember_coords(ip: str, where: tuple[float, float]) -> None:
+    kept = _coords_read()
+    kept.pop(ip, None)
+    kept[ip] = [where[0], where[1]]
+    while len(kept) > COORDS_KEPT:
+        kept.pop(next(iter(kept)))
+    try:
+        f = _coords_file()
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(kept))
+        tmp.replace(f)
+    except OSError:
+        pass
+
+
+def coords(ip: str | None) -> tuple[float, float] | None:
+    """Where the last measurement placed this address, or None."""
+    if not ip:
+        return None
+    found = _coords_read().get(ip)
+    try:
+        return (float(found[0]), float(found[1])) if found else None
+    except (TypeError, ValueError, IndexError):
+        return None

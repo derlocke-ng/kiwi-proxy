@@ -218,3 +218,17 @@ def test_a_dead_proxy_stops_the_plan_before_any_container(monkeypatch):
     monkeypatch.setattr(endpoint, "reachable", dead)
     with pytest.raises(gateway.GatewayError, match="work: the proxy at 10.64.0.1:1080 refuses"):
         gateway.plan(make_exit(), measure=False)
+
+
+def test_an_exits_coordinates_are_kept_beside_its_record():
+    from kiwi_proxy import endpoint as ep
+
+    info = ep.parse_geo(
+        '{"ip": "198.51.100.7", "country_iso": "NL", "latitude": 52.37, "longitude": 4.89}'
+    )
+    assert info.ip == "198.51.100.7" and ep.coords("198.51.100.7") == (52.37, 4.89)
+    ep.parse_geo('{"ip": "203.0.113.9", "country": "DE", "loc": "50.11,8.68"}')
+    assert ep.coords("203.0.113.9") == (50.11, 8.68)
+    ep.parse_geo('{"ip": "192.0.2.1", "country": "US"}')
+    assert ep.coords("192.0.2.1") is None and ep.coords(None) is None
+    assert ep.coords_in({"latitude": 0, "longitude": 0}) is None  # "unknown" in some services

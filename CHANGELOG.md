@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.20.0
+
+- **Where an exit is.** The ip-echo answer a measurement already gets carries
+  coordinates (ifconfig.co, am.i.mullvad.net, ipinfo.io); they are now kept in
+  `exit-coords.json` in the cache folder, beside the exit records rather than in
+  them, so an older kiwi-proxy reading a snapshot of a newer record does not
+  fail. `endpoint.coords(ip)` for consumers: kiwi-fox 0.12 gives a profile's
+  browser its exit's position.
+
 ## 0.19.0
 
 - **Preferences behind a gear, a slim menu.** The gear beside the menu opens
