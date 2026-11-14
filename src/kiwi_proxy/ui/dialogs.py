@@ -182,6 +182,12 @@ class ExitEditor(Adw.Dialog):
         self.lease_row.add_suffix(self.lease_button)
         self.lease_row.set_activatable_widget(self.lease_button)
         upstream.add(self.lease_row)
+        # A module with an account (9proxy): whether it is set, and the way to set it.
+        self.account_row = Adw.ActionRow(title="Account", use_markup=False, visible=False)
+        self.account_button = Gtk.Button(label="Set…", valign=Gtk.Align.CENTER)
+        self.account_button.connect("clicked", self._on_account)
+        self.account_row.add_suffix(self.account_button)
+        upstream.add(self.account_row)
         # The module says where it can exit (Tor relays, Mysterium providers, with
         # counts); a module that cannot say gets every country there is.
         self.country_row = Adw.ComboRow(title="Country", subtitle="any", enable_search=True)
@@ -378,12 +384,27 @@ class ExitEditor(Adw.Dialog):
             row.set_active(name in ex.dns.blocklists)
         self.socks_row.set_selected([k for k, _l in SOCKS_AUTH].index(ex.socks_auth))
 
+    def _show_account(self, module: str | None) -> None:
+        state = providers.account_state(module)
+        self.account_row.set_visible(state is not None)
+        if state is not None:
+            self.account_row.set_subtitle(state[1])
+            self.account_button.set_label("Change…" if state[0] else "Set…")
+
+    def _on_account(self, *_args) -> None:
+        module = self.module
+        ModuleConfigDialog(module, lambda *_a: self._show_account(module)).present(self)
+
     def _on_source(self, *_args) -> None:
         module = self.module
         lists = selection.supports(module)
         config = providers.takes_config(module)
         self.endpoint_row.set_visible(module is None)
-        self.lease_row.set_visible(module is not None and not lists and not config)
+        # A module that hands out its own leases (9proxy's ports) has nothing to choose.
+        self.lease_row.set_visible(
+            module is not None and not lists and not config and not providers.assigns_leases(module)
+        )
+        self._show_account(module)
         self.lease_row.set_title(_noun_of(module).capitalize())
         self.country_row.set_visible(module is not None and not lists and not config)
         self.config_row.set_visible(config)
@@ -438,7 +459,7 @@ class ExitEditor(Adw.Dialog):
             self.country_row.set_model(Gtk.StringList.new([ANY_COUNTRY, *(c.label for c in found)]))
             self._select_country(want.upper() if want else None)
             self.country_row.set_subtitle(
-                f"{len(found)} the module has exits in" if own else "any — the module does not say"
+                f"{len(found)} the module has exits in" if own else "where the exit should be"
             )
 
         def failed(exc: Exception) -> None:

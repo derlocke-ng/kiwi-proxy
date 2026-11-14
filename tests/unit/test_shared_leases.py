@@ -89,3 +89,13 @@ def test_other_exits_have_no_new_ip(new_exit, capsys):
     assert not gateway.renews(ex)
     assert cli.main(["renew", ex.name]) == 1
     assert "no new IPs" in capsys.readouterr().err
+
+
+def test_a_module_that_hands_out_its_leases_and_has_an_account_says_so(tmp_path):
+    from kiwi_proxy import paths, providers
+
+    mdir = paths.module_dir("fakeports")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(MODULE_SRC)
+    assert providers.assigns_leases("fakeports") and not providers.assigns_leases(None)
+    assert providers.account_state(None) is None

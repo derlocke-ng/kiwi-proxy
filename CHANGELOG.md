@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.0
+
+- **New exit on 9proxy shows what there is to choose.** No port picker: 9proxy's
+  ten ports are handed out by the module. An **Account** row says whether the
+  module's account is set and opens its settings (also for Mysterium's
+  identity). The Country row no longer says "the module does not say".
+
 ## 0.20.0
 
 - **Where an exit is.** The ip-echo answer a measurement already gets carries

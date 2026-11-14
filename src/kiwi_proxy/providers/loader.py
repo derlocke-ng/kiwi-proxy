@@ -114,6 +114,33 @@ def manages(name: str | None) -> bool:
         return False
 
 
+def assigns_leases(name: str | None) -> bool:
+    """Does the module hand out its leases itself (9proxy: the next free of its
+    ten ports), so there is nothing for the user to choose?"""
+    if not name or not is_installed(name):
+        return False
+    try:
+        return callable(getattr(get_provider(name), "assign_lease", None))
+    except ProviderError:
+        return False
+
+
+def account_state(name: str | None) -> tuple[bool, str] | None:
+    """For a module that needs an account (its manifest says so, and it declares
+    settings): (is it set, one line on it). None for a module that needs none."""
+    if not name or not is_installed(name):
+        return None
+    try:
+        prov, manifest = load(name)
+        ctx = context_for(name, manifest)
+        if not manifest.needs_account or not list(getattr(prov, "settings", lambda _c: [])(ctx)):
+            return None
+        state = prov.configured(ctx)
+    except Exception:  # noqa: BLE001 - a row's text, not a command
+        return None
+    return (bool(state), state or "not set")
+
+
 def takes_config(name: str | None) -> bool:
     """Does an exit on this module need a config file of its own (a VPN: its
     WireGuard or OpenVPN config)?"""
