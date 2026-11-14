@@ -191,6 +191,7 @@ only with `--force`.
 | `setup` | Builds the gateway image, downloads the DNS data and prepares the modules. |
 | `doctor` | Checks Podman, the password store, the DNS data, the images, the modules and snapshots. |
 | `storage check`, `storage repair`, `storage leftovers` | Checks Podman's storage, repairs it, and lists or removes containers that a crash left behind. |
+| `storage images` | Lists Kiwi's own images that nothing uses any more; `--remove` removes them. |
 
 An exit can be named by its name or by the first characters of its id.
 `kiwi-proxy COMMAND --help` lists every option of a command.
@@ -206,6 +207,11 @@ An exit can be named by its name or by the first characters of its id.
   broken container and the app it belongs to. `kiwi-proxy storage repair`
   removes the broken Kiwi containers, and other containers only with
   `--theirs-too`, then lets Podman repair the rest.
+- `kiwi-proxy storage images --remove` removes Kiwi's own images that nothing
+  uses any more, for example an image from before an app was renamed or a
+  module's adapter that the module no longer has. **Check and repair** in the
+  app offers the same when Podman's storage is fine. Images that are not Kiwi's,
+  untagged images and a kiwi-custodia box's image are never removed.
 - `kiwi-proxy storage leftovers --remove` removes kiwi-proxy containers that a
   crash left in the states "created", "exited" or "dead". `--app kiwi-fox` or
   `--app kiwi-custodia` does the same for those apps.

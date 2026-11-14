@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.0
+
+- **Old Kiwi images can be removed.** When Podman's storage is fine, **Check and
+  repair** lists Kiwi's own images that nothing uses any more (an image from
+  before an app was renamed, a module's adapter the module no longer has) and
+  removes them on your word; `kiwi-proxy storage images [--remove]` does the
+  same. Images that are not Kiwi's, untagged ones, a box's image and any image
+  a container uses stay.
+
 ## 0.21.0
 
 - **New exit on 9proxy shows what there is to choose.** No port picker: 9proxy's

@@ -57,12 +57,49 @@ def check_and_repair(parent: Gtk.Widget, on_changed=None) -> None:
     worker.run(storage.check, done, failed)
 
 
+def _offer_old_images(parent: Gtk.Widget, on_changed=None) -> None:
+    """Storage is fine: say so, and offer to remove Kiwi's images nothing uses."""
+
+    def found(old: list[storage.Image]) -> None:
+        if not old:
+            _alert(parent, "Podman's storage is fine", "Nothing is damaged, nothing is left over.")
+            return
+        total = sum(i.size for i in old) / 1e6
+        lines = [f"• {i.name.removeprefix('localhost/')} ({i.size / 1e6:.0f} MB)" for i in old]
+        dialog = Adw.AlertDialog(
+            heading="Podman's storage is fine",
+            body="Nothing is damaged. These old Kiwi images are not used by anything "
+            f"any more ({total:.0f} MB):\n" + "\n".join(lines),
+        )
+        dialog.add_response("cancel", "Keep")
+        dialog.add_response("remove", "Remove")
+        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response: str) -> None:
+            if response != "remove":
+                return
+            worker.run(
+                lambda: storage.remove_images([i.name for i in old]),
+                lambda gone: (
+                    _alert(parent, "Removed", f"{len(gone)} of {len(old)} old images."),
+                    on_changed() if on_changed else None,
+                ),
+                lambda exc: _alert(parent, "Could not remove", str(exc)),
+            )
+
+        dialog.connect("response", on_response)
+        dialog.present(parent)
+
+    worker.run(storage.old_images, found, lambda _exc: found([]))
+
+
 def show(parent: Gtk.Widget, report: storage.Report, on_changed=None) -> None:
     if report.error:
         _alert(parent, "Could not check Podman's storage", report.error)
         return
     if report.ok:
-        _alert(parent, "Podman's storage is fine", "Nothing is damaged.")
+        _offer_old_images(parent, on_changed)
         return
     ours, others = report.ours, report.others
     body: list[str] = []

@@ -148,3 +148,37 @@ def test_a_new_exit_starts_with_the_dns_preferences():
     )
     assert prefs.new_exit_dns().services == ["quad9", "mullvad", "cloudflare", "google"]
     assert prefs.new_exit_dns().blocklists == ["oisd-small"]
+
+
+def test_old_kiwi_images_are_the_ones_nothing_wants_or_uses(monkeypatch):
+    import json
+    import subprocess
+
+    from kiwi_proxy import podman, storage
+
+    images = [
+        {"Id": "a", "Names": ["localhost/kiwi-proxy/gateway:latest"], "Size": 1},
+        {"Id": "b", "Names": ["localhost/kiwi-fox/gateway:latest"], "Size": 270_000_000},
+        {"Id": "c", "Names": ["localhost/kiwi-fox/browser:before-fonts"], "Size": 2},
+        {"Id": "d", "Names": ["localhost/kiwi-proxy/vpn-adapter:latest"], "Size": 3},
+        {"Id": "e", "Names": ["localhost/kiwi-custodia/box-c8ecdf0a:latest"], "Size": 4},
+        {"Id": "f", "Names": ["docker.io/library/fedora:43"], "Size": 5},
+        {"Id": "g", "Names": None, "Size": 6},
+    ]
+    ran = []
+
+    def run(args, check=True, timeout=120):
+        ran.append(args)
+        out = {"ps": [{"ImageID": "d"}], "images": images}.get(args[0], [])
+        return subprocess.CompletedProcess(args, 0, json.dumps(out), "")
+
+    monkeypatch.setattr(podman, "available", lambda: True)
+    monkeypatch.setattr(podman, "_run", run)
+    old = storage.old_images(wanted={"localhost/kiwi-proxy/gateway:latest"})
+    # not the wanted one, not the one a container uses, not a box, not the user's
+    assert [i.name for i in old] == [
+        "localhost/kiwi-fox/browser:before-fonts",
+        "localhost/kiwi-fox/gateway:latest",
+    ]
+    assert storage.remove_images([i.name for i in old]) == [i.name for i in old]
+    assert ["rmi", "localhost/kiwi-fox/gateway:latest"] in ran  # never forced

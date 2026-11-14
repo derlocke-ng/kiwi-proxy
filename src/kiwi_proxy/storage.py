@@ -153,3 +153,84 @@ def repair(report: Report, names: list[str]) -> Report:
     if report.layers or not report.broken:
         podman._run(["system", "check", "--quick", "--repair"], check=False, timeout=600)
     return check()
+
+
+# ---------------------------------------------------------------- old images
+# Images Kiwi built once and nothing asks for any more: an app's image from
+# before a rename (kiwi-fox/gateway, from before kiwi-proxy existed), a module's
+# adapter the module no longer has (vpn-adapter), a tag kept by hand. Only images
+# under Kiwi's own names are looked at; untagged ones cannot be told from the
+# user's own and are left alone. An image a container still uses is never listed.
+KIWI_REPOS = ("localhost/kiwi-proxy/", "localhost/kiwi-fox/", "localhost/kiwi-custodia/")
+
+
+@dataclass(frozen=True)
+class Image:
+    name: str  # localhost/kiwi-fox/browser:before-fonts
+    id: str
+    size: int
+
+
+def wanted_images() -> set[str]:
+    """Every image name the installed Kiwi apps build and start from."""
+    from . import providers
+
+    want = {
+        f"localhost/{paths.GATEWAY_IMAGE}",
+        "localhost/kiwi-fox/browser:latest",
+        "localhost/kiwi-custodia/tunnel:latest",
+    }
+    for name in providers.discover():
+        try:
+            prov, manifest = providers.load(name)
+            ctx = providers.context_for(name, manifest)
+        except Exception:  # noqa: BLE001 - a module that does not load keeps its images
+            want |= {
+                f"localhost/{paths.provider_image(name)}",
+                f"localhost/{paths.provider_image(name + '-adapter')}",
+            }
+            continue
+        want.add(_local(ctx.image))
+        if hasattr(prov, "adapter_spec") and manifest.joins != "tunnel":
+            want.add(_local(ctx.adapter_image))
+    return want
+
+
+def _local(image: str) -> str:
+    """As `podman images` names a locally built image; a registry's stays as it is."""
+    return image if image.split("/")[0].count(".") else f"localhost/{image}"
+
+
+def old_images(*, wanted: set[str] | None = None) -> list[Image]:
+    """Kiwi's own images that nothing wants and no container uses. A Kiwi
+    Custodia box's image (box-…) is the box's contents and is never one."""
+    if not podman.available():
+        return []
+    want = wanted if wanted is not None else wanted_images()
+    used = {
+        c.get("ImageID", "")
+        for c in json.loads(
+            podman._run(["ps", "--all", "--format", "json"], check=False, timeout=60).stdout or "[]"
+        )
+    }
+    proc = podman._run(["images", "--format", "json"], check=False, timeout=60)
+    out = []
+    for img in json.loads(proc.stdout or "[]") if proc.returncode == 0 else []:
+        if img.get("Id") in used:
+            continue
+        for name in img.get("Names") or []:
+            if not name.startswith(KIWI_REPOS) or name in want:
+                continue
+            if name.startswith("localhost/kiwi-custodia/box-"):
+                continue
+            out.append(Image(name=name, id=img.get("Id", ""), size=int(img.get("Size") or 0)))
+    return sorted(out, key=lambda i: i.name)
+
+
+def remove_images(names: list[str]) -> list[str]:
+    """`podman rmi` each (never forced: one in use stays); the ones that went."""
+    gone = []
+    for name in names:
+        if podman._run(["rmi", name], check=False, timeout=120).returncode == 0:
+            gone.append(name)
+    return gone

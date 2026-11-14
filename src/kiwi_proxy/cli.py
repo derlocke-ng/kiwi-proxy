@@ -578,6 +578,14 @@ def cmd_storage(a: argparse.Namespace) -> int:
         if not found:
             _p("none")
         return 0
+    if a.storage_cmd == "images":
+        old = storage.old_images()
+        gone = storage.remove_images([i.name for i in old]) if a.remove else []
+        for i in old:
+            _p(f"{i.name:52} {i.size / 1e6:6.0f} MB{'  removed' if i.name in gone else ''}")
+        if not old:
+            _p("none")
+        return 0
     report = storage.check()
     if report.error:
         return _fail(f"could not check: {report.error}")
@@ -1336,6 +1344,8 @@ def build_parser() -> argparse.ArgumentParser:
     sl = stsub.add_parser("leftovers", help="an app's containers a crash left behind")
     sl.add_argument("--app", default="kiwi-proxy", help="kiwi-proxy, kiwi-fox or kiwi-custodia")
     sl.add_argument("--remove", action="store_true")
+    si = stsub.add_parser("images", help="old Kiwi images nothing uses any more")
+    si.add_argument("--remove", action="store_true")
     st.set_defaults(func=cmd_storage)
 
     dn_ = sub.add_parser("dns", help="resolver stamps and blocklists")
