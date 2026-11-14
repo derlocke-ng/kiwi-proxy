@@ -98,7 +98,9 @@ class Setting:
 
     key: str
     title: str
-    kind: Literal["file", "password", "text"] = "text"
+    # "choice" (an exit option only): picked from a list the module gives,
+    # `option_choices(ctx, key, country) -> list[Lease]`.
+    kind: Literal["file", "password", "text", "choice"] = "text"
     help: str = ""
     required: bool = True
 

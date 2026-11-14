@@ -255,6 +255,11 @@ stores the values in the exit's endpoint (`options`, written only when set) and
 passes them as `options=` to the module's `up` and `renew` when those methods
 have that parameter.
 
+A `Setting` of kind `choice` is picked from a list instead of typed: the dialog
+adds a **Choose…** button that shows what the module's
+`option_choices(ctx, key, country) -> list[Lease]` returns. kiwi-plugin-9proxy
+lists the addresses on the account's list for today this way.
+
 ### A config file per exit
 
 `check_config(text) -> str` makes a module take one (`--config FILE`, the app's

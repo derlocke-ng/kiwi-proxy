@@ -176,7 +176,15 @@ under **Country**; on the command line:
 kiwi-proxy add la --module 9proxy --country us --opt state=California --opt "city=Los Angeles"
 ```
 
-9proxy has no list of single addresses to pick from.
+9proxy publishes no list of the states and cities it has; use the names its
+website shows. What it does list is the addresses your account already used
+today: **An IP from today's list → Choose…** shows them with city and whether
+they are online, and binding one of them again costs nothing.
+
+A new exit starts on an address from today's list. On a new account, or in a
+country you have not used today, that list is empty: the exit says so and does
+not come up. **New IP** in the exit's details (or `kiwi-proxy renew EXIT`) then
+takes one address from your balance, and the exit comes up on it.
 
 One 9proxy daemon serves ten ports, 60000 to 60009, and each new 9proxy exit
 gets the next free one. An eleventh exit is refused. An exit starts on an IP

@@ -399,8 +399,22 @@ class ExitEditor(Adw.Dialog):
             row.set_text(kept.get(opt.key) or saved.get(opt.key, ""))
             if opt.help:
                 row.set_tooltip_text(opt.help)
+            if opt.kind == "choice":
+                # Picked from the module's own list; the id can be typed too.
+                choose = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+                choose.connect("clicked", self._on_choose_option, opt, row)
+                row.add_suffix(choose)
             self._upstream.add(row)
             self._option_rows[opt.key] = row
+
+    def _on_choose_option(self, _button, opt, row) -> None:
+        LeasePicker(
+            self.module,
+            self.country,
+            row.get_text().strip() or None,
+            lambda picked, _lease: row.set_text(picked or ""),
+            choices=(opt.key, opt.title),
+        ).present(self)
 
     def _show_account(self, module: str | None) -> None:
         state = providers.account_state(module)
@@ -1031,11 +1045,19 @@ class LeasePicker(Adw.Dialog):
     lease)` gets the choice; None for the module's own."""
 
     def __init__(
-        self, module: str, country: str | None, current: str | None, on_picked, toast=None
+        self,
+        module: str,
+        country: str | None,
+        current: str | None,
+        on_picked,
+        toast=None,
+        choices=None,
     ) -> None:
         self.module, self.country, self.current = module, country, current
         self._on_picked = on_picked
         self._toast = toast
+        # An exit option's own list (9proxy: today's IPs) instead of the leases.
+        self._choices = choices  # (key, noun) or None
         self._leases: list[Lease] = []
         self._kind: str | None = None
         self._mirroring = False
@@ -1119,6 +1141,9 @@ class LeasePicker(Adw.Dialog):
         def work():
             prov, manifest = providers.load(module)
             ctx = providers.context_for(module, manifest)
+            if self._choices:
+                key, noun = self._choices
+                return manifest, noun, list(prov.option_choices(ctx, key, country))
             return manifest, providers.lease_noun_of(prov), providers.leases_for(prov, ctx, country)
 
         def done(result) -> None:

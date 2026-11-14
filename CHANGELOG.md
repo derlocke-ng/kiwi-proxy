@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.0
+
+- **An exit option can be picked from a list the module gives** (a `Setting` of
+  kind `choice`, with the module's `option_choices`): the row gets a Choose…
+  button that opens the picker. kiwi-plugin-9proxy 0.5.0 uses it for the IPs on
+  today's list.
+
 ## 0.23.0
 
 - **An exit can carry its module's own options.** A module says what else an
