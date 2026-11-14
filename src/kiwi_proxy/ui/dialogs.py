@@ -198,6 +198,10 @@ class ExitEditor(Adw.Dialog):
         )
         self.country_row.connect("notify::selected", self._on_country)
         upstream.add(self.country_row)
+        # What else the module lets an exit choose by (9proxy: state, city, zip
+        # code, plan): one row each, made when the source is chosen.
+        self._upstream = upstream
+        self._option_rows: dict[str, Adw.EntryRow] = {}
         # A module that takes lists (Tor): Only and Never countries and relays,
         # chosen in their own dialog instead of the one-country row.
         self._only_countries: list[str] = []
@@ -384,6 +388,20 @@ class ExitEditor(Adw.Dialog):
             row.set_active(name in ex.dns.blocklists)
         self.socks_row.set_selected([k for k, _l in SOCKS_AUTH].index(ex.socks_auth))
 
+    def _show_options(self, module: str | None) -> None:
+        kept = {k: r.get_text() for k, r in self._option_rows.items()}
+        for row in self._option_rows.values():
+            self._upstream.remove(row)
+        self._option_rows = {}
+        saved = self.ex.endpoint.options if self.ex and self.ex.endpoint.module == module else {}
+        for opt in providers.exit_options(module):
+            row = Adw.EntryRow(title=opt.title)
+            row.set_text(kept.get(opt.key) or saved.get(opt.key, ""))
+            if opt.help:
+                row.set_tooltip_text(opt.help)
+            self._upstream.add(row)
+            self._option_rows[opt.key] = row
+
     def _show_account(self, module: str | None) -> None:
         state = providers.account_state(module)
         self.account_row.set_visible(state is not None)
@@ -405,6 +423,7 @@ class ExitEditor(Adw.Dialog):
             module is not None and not lists and not config and not providers.assigns_leases(module)
         )
         self._show_account(module)
+        self._show_options(module)
         self.lease_row.set_title(_noun_of(module).capitalize())
         self.country_row.set_visible(module is not None and not lists and not config)
         self.config_row.set_visible(config)
@@ -610,6 +629,9 @@ class ExitEditor(Adw.Dialog):
                     raise ValueError("; ".join(problems))
             else:
                 ep = exits.module_endpoint(module, lease=self._lease, country=country)
+                ep.options = providers.clean_options(
+                    module, {k: r.get_text() for k, r in self._option_rows.items()}
+                )
         else:
             text = self.endpoint_row.get_text().strip()
             if (

@@ -141,6 +141,32 @@ def account_state(name: str | None) -> tuple[bool, str] | None:
     return (bool(state), state or "not set")
 
 
+def exit_options(name: str | None) -> list:
+    """What an exit on this module can also be chosen by, as Settings (key, title,
+    help): 9proxy's state, city, zip code and plan. Empty for most modules."""
+    if not name or not is_installed(name):
+        return []
+    try:
+        prov, manifest = load(name)
+        hook = getattr(prov, "exit_options", None)
+        return list(hook(context_for(name, manifest))) if callable(hook) else []
+    except Exception:  # noqa: BLE001 - rows in a dialog, not a command
+        return []
+
+
+def clean_options(name: str | None, given: dict[str, str]) -> dict[str, str]:
+    """`given` with empty values dropped; a key the module does not have is an error."""
+    known = {s.key for s in exit_options(name)}
+    out = {}
+    for key, value in given.items():
+        if key not in known:
+            have = ", ".join(sorted(known)) or "none"
+            raise ProviderError(f"{name}: no option {key!r} (it has: {have})")
+        if value.strip():
+            out[key] = value.strip()
+    return out
+
+
 def takes_config(name: str | None) -> bool:
     """Does an exit on this module need a config file of its own (a VPN: its
     WireGuard or OpenVPN config)?"""

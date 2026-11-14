@@ -186,7 +186,7 @@ def create(
 
 # Endpoint fields written only when set, so an older kiwi-proxy (which forbids
 # fields it does not know) still reads an exit that uses none of them.
-_OMIT_EMPTY = ("only_countries", "only_nodes", "never_countries")
+_OMIT_EMPTY = ("only_countries", "only_nodes", "never_countries", "options")
 
 
 def save(ex: Exit) -> None:

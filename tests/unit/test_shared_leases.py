@@ -99,3 +99,52 @@ def test_a_module_that_hands_out_its_leases_and_has_an_account_says_so(tmp_path)
     (mdir / "provider.py").write_text(MODULE_SRC)
     assert providers.assigns_leases("fakeports") and not providers.assigns_leases(None)
     assert providers.account_state(None) is None
+
+
+OPTIONS_SRC = (
+    MODULE_SRC.replace("class ", "from kiwi_proxy.providers.base import Setting\n\n\nclass ", 1)
+    + """
+
+def _exit_options(self, ctx):
+    return [Setting("city", "City", required=False), Setting("zip", "Zip code", required=False)]
+
+
+type(PROVIDER).exit_options = _exit_options
+"""
+)
+
+
+def test_an_exit_keeps_the_modules_own_options(capsys):
+    import json
+
+    from kiwi_proxy import cli, exits, gateway, paths, providers
+
+    mdir = paths.module_dir("fakeports")
+    mdir.mkdir(parents=True, exist_ok=True)
+    (mdir / "provider.py").write_text(OPTIONS_SRC)
+    assert [o.key for o in providers.exit_options("fakeports")] == ["city", "zip"]
+    assert (
+        cli.main(
+            ["add", "la", "--module", "fakeports", "--country", "us", "--opt", "city=Los Angeles"]
+        )
+        == 0
+    )
+    ex = exits.find_by_name("la")
+    assert ex.endpoint.options == {"city": "Los Angeles"}
+    assert cli.main(["set", "la", "--opt", "zip=90001"]) == 0
+    assert exits.find_by_name("la").endpoint.options == {"city": "Los Angeles", "zip": "90001"}
+    assert cli.main(["set", "la", "--opt", "city="]) == 0  # KEY= clears one
+    ex = exits.find_by_name("la")
+    assert ex.endpoint.options == {"zip": "90001"}
+    assert cli.main(["set", "la", "--opt", "street=x"]) == 1
+    assert "no option 'street'" in capsys.readouterr().err
+    # a method that takes options gets them; one that does not is called as before
+    assert gateway._options(lambda ctx, *, lease=None, options=None: None, ex) == {
+        "options": {"zip": "90001"}
+    }
+    assert gateway._options(lambda ctx, *, lease=None: None, ex) == {}
+    plain = exits.create("plain", exits.module_endpoint("fakeports", lease=None, country=None))
+    assert (
+        "options"
+        not in json.loads((paths.exit_dir(plain.id) / "exit.json").read_text())["endpoint"]
+    )

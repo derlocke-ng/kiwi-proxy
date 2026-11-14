@@ -24,11 +24,13 @@ from .loader import (
     account_state,
     assigns_leases,
     check_config,
+    clean_options,
     config_from,
     config_sources,
     container_of,
     context_for,
     discover,
+    exit_options,
     get_provider,
     is_installed,
     lease_alive,
@@ -39,6 +41,8 @@ from .loader import (
 )
 
 __all__ = [
+    "clean_options",
+    "exit_options",
     "account_state",
     "assigns_leases",
     "ContainerProvider",

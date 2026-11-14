@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.0
+
+- **An exit can carry its module's own options.** A module says what else an
+  exit can be chosen by (`exit_options`); the exit dialog shows a row for each
+  and `add`/`set` take `--opt KEY=VALUE` (`KEY=` clears one). kiwi-plugin-9proxy
+  0.4.0 uses it for 9proxy's state, city, zip code and plan. The options are
+  stored with the exit only when set and handed to the module's `up` and
+  `renew` when those take them.
+
 ## 0.22.0
 
 - **Old Kiwi images can be removed.** When Podman's storage is fine, **Check and

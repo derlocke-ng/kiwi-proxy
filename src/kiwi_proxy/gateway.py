@@ -315,12 +315,26 @@ def is_tunnel(ex: Exit) -> bool:
     return tunnel_of(ex) is not None
 
 
+def _options(method, ex: Exit) -> dict:
+    """The exit's own options (9proxy: state, city, …), for a module method that
+    takes them."""
+    import inspect
+
+    try:
+        takes = "options" in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        takes = False
+    return {"options": dict(ex.endpoint.options)} if takes else {}
+
+
 def _provider_up(prov, ctx, ex: Exit):
     """Bring an exit's provider up: with its selection (only, never) for a module
     that takes one, in a container of its own for that selection."""
     sel = selection.for_exit(ex)
     if sel is None:
-        return prov.up(ctx, lease=ex.endpoint.lease, country=ex.endpoint.country)
+        return prov.up(
+            ctx, lease=ex.endpoint.lease, country=ex.endpoint.country, **_options(prov.up, ex)
+        )
     if problems := sel.problems():
         raise providers.ProviderError(f"{ex.name}: " + "; ".join(problems))
     return prov.up(ctx, lease=selection.lease_for(ex), country=ex.endpoint.country, selection=sel)
@@ -707,7 +721,14 @@ def renew(ex) -> tuple[list[str], ExitInfo | None]:
     prov, manifest = providers.load(module)
     ctx = providers.context_for(module, manifest)
     try:
-        lines = list(prov.renew(ctx, lease=_provider_lease(ex), country=ex.endpoint.country))
+        lines = list(
+            prov.renew(
+                ctx,
+                lease=_provider_lease(ex),
+                country=ex.endpoint.country,
+                **_options(prov.renew, ex),
+            )
+        )
     except providers.ProviderError as exc:
         raise GatewayError(str(exc)) from exc
     info = None

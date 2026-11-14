@@ -168,6 +168,16 @@ kiwi-proxy add us-1 --module 9proxy --country us
 kiwi-proxy renew us-1
 ```
 
+Besides the country, a 9proxy exit can be chosen by state or region, city, zip
+code and plan, as 9proxy's own command filters them. In the app these are rows
+under **Country**; on the command line:
+
+```bash
+kiwi-proxy add la --module 9proxy --country us --opt state=California --opt "city=Los Angeles"
+```
+
+9proxy has no list of single addresses to pick from.
+
 One 9proxy daemon serves ten ports, 60000 to 60009, and each new 9proxy exit
 gets the next free one. An eleventh exit is refused. An exit starts on an IP
 address from 9proxy's list for today, without using up a new one.

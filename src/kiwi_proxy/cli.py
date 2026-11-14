@@ -46,6 +46,16 @@ def _json(payload: object) -> int:
 _endpoint_from_module = exits.module_endpoint
 
 
+def _opts(a) -> dict[str, str]:
+    out = {}
+    for item in getattr(a, "opt", None) or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key.strip():
+            raise providers.ProviderError(f"--opt takes KEY=VALUE, not {item!r}")
+        out[key.strip()] = value
+    return out
+
+
 def _module_endpoint(module: str, *, lease, country, base=None):
     """A module endpoint from the command line. For a module that takes several
     countries (Tor), --country is a list of them and goes to its Only list."""
@@ -184,6 +194,7 @@ def cmd_add(a: argparse.Namespace) -> int:
     elif a.module:
         try:
             ep, password = _module_endpoint(a.module, lease=a.lease, country=a.country), None
+            ep.options = providers.clean_options(a.module, _opts(a))
         except ValueError as exc:
             return _fail(str(exc))
     else:
@@ -301,6 +312,8 @@ def cmd_show(a: argparse.Namespace) -> int:
         _p(f"  tunnel    {note[0]}")
     if gateway.tunnel_passes(ex, max_age=0) is False:
         _p("  tunnel    the VPN is not answering; it comes back by itself when the server does")
+    if ex.endpoint.options:
+        _p("  options   " + ", ".join(f"{k}={v}" for k, v in sorted(ex.endpoint.options.items())))
     if ex.socks_auth != "inject":
         _p(
             f"  socks     {ex.socks_auth} (clients' own SOCKS auth goes upstream behind the exit token)"
@@ -332,11 +345,19 @@ def cmd_set(a: argparse.Namespace) -> int:
         secrets.clear(ex.id, kind="endpoint")
         if password:
             secrets.store(ex.id, password, kind="endpoint")
-    elif a.module or a.lease or a.country is not None or a.never is not None or a.node is not None:
+    elif (
+        a.module
+        or a.lease
+        or a.opt
+        or a.country is not None
+        or a.never is not None
+        or a.node is not None
+    ):
         module = a.module or ex.endpoint.module
         if not module:
             return _fail("--lease/--country/--never/--node need a module-backed exit (or --module)")
         try:
+            kept = dict(ex.endpoint.options) if ex.endpoint.module == module else {}
             ex.endpoint = _module_endpoint(
                 module,
                 lease=a.lease or ex.endpoint.lease,
@@ -346,7 +367,8 @@ def cmd_set(a: argparse.Namespace) -> int:
                 base=ex.endpoint,
             )
             _apply_lists(ex.endpoint, a)
-        except ValueError as exc:
+            ex.endpoint.options = providers.clean_options(module, {**kept, **_opts(a)})
+        except (ValueError, providers.ProviderError) as exc:
             return _fail(str(exc))
     try:
         if a.no_expose:
@@ -1161,6 +1183,13 @@ def _snapshot_parser(sub) -> None:
 def _endpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--module", help="a provider module that produces the endpoint (tor, vpn, …)")
     p.add_argument("--lease", help="which of the module's exits (see `module leases`)")
+    p.add_argument(
+        "--opt",
+        action="append",
+        metavar="KEY=VALUE",
+        help="what else the module lets an exit choose by (9proxy: state, city, zip, plan); "
+        "KEY= clears one (repeatable)",
+    )
     p.add_argument(
         "--login", metavar="USER", help="for a VPN config that asks for a username and password"
     )

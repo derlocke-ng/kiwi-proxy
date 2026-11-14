@@ -245,6 +245,16 @@ show in the exit's details, `kiwi-proxy show` and `kiwi-proxy up` while it runs
 (`gateway.provider_note(exit)`). kiwi-plugin-vpn says when it fitted a WireGuard
 config's MTU to the path.
 
+### Options per exit
+
+`exit_options(ctx) -> list[Setting]` makes a module offer more to choose an exit
+by than its country: kiwi-plugin-9proxy returns state, city, zip code and plan,
+the filters of 9proxy's own command. The exit dialog shows a text row for each
+`Setting`, and `kiwi-proxy add` and `set` take `--opt KEY=VALUE`. kiwi-proxy
+stores the values in the exit's endpoint (`options`, written only when set) and
+passes them as `options=` to the module's `up` and `renew` when those methods
+have that parameter.
+
 ### A config file per exit
 
 `check_config(text) -> str` makes a module take one (`--config FILE`, the app's

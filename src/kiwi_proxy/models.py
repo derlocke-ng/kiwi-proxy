@@ -40,6 +40,9 @@ class Endpoint(Strict):
     only_countries: list[str] = Field(default_factory=list)
     only_nodes: list[str] = Field(default_factory=list)
     never_countries: list[str] = Field(default_factory=list)
+    # What else the module lets an exit choose by (`exit_options`): 9proxy's
+    # state, city, zip code and plan. Written only when set, like the lists above.
+    options: dict[str, str] = Field(default_factory=dict)
 
     @property
     def label(self) -> str:
