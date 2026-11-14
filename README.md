@@ -15,7 +15,7 @@ kiwi-custodia (distro boxes) and kiwi-pentesting use its exits, and a
 kiwi-server machine can host exits for the whole mesh with the module in this
 repository.
 
-- Latest release: **v0.24.0**, in the
+- Latest release: **v0.24.1**, in the
   [Kiwi catalog](https://kiwi-network.eu/docs/desktop/catalogs/) (user scope,
   no root needed)
 - Runs on: Linux with rootless Podman and Python 3.12 or newer. CI runs the

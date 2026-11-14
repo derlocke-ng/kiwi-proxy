@@ -169,29 +169,30 @@ kiwi-proxy renew us-1
 ```
 
 Besides the country, a 9proxy exit can be chosen by state or region, city, zip
-code and plan, as 9proxy's own command filters them. In the app these are rows
+code, internet provider and plan. In the app these are rows
 under **Country**; on the command line:
 
 ```bash
 kiwi-proxy add la --module 9proxy --country us --opt state=California --opt "city=Los Angeles"
 ```
 
-9proxy publishes no list of the states and cities it has; use the names its
-website shows. What it does list is the addresses your account already used
-today: **An IP from today's list → Choose…** shows them with city and whether
-they are online, and binding one of them again costs nothing.
+**Choose…** beside State, City, Internet provider and Zip code lists what
+9proxy has in the exit's country (choose the country first). The lists are the
+ones 9proxy's own program shows; 9proxy does not document them, so they can
+change without notice, and a name can still be typed. **An IP from today's
+list → Choose…** shows the addresses your account already used today, with
+city and whether they are online; binding one of them again costs nothing.
 
-A new exit starts on an address from today's list. On a new account, or in a
-country you have not used today, that list is empty: the exit says so and does
-not come up. **New IP** in the exit's details (or `kiwi-proxy renew EXIT`) then
-takes one address from your balance, and the exit comes up on it.
+When an exit is brought up, it takes an address from today's list that fits
+its country and filters. If there is none, for example on a new account or in
+a country you have not used today, it takes a new address, which uses one IP
+from your 9proxy balance. **New IP** in the exit's details (or
+`kiwi-proxy renew EXIT`) always takes a new one.
 
 One 9proxy daemon serves ten ports, 60000 to 60009, and each new 9proxy exit
-gets the next free one. An eleventh exit is refused. An exit starts on an IP
-address from 9proxy's list for today, without using up a new one.
-`kiwi-proxy renew EXIT`, or **New IP** in the exit's details, asks for a new
-address. This uses one IP address from your 9proxy balance, and the app asks
-first.
+gets the next free one. An eleventh exit is refused. So up to ten 9proxy exits
+can be up at once, each with its own country, filters and address, and any
+number of browser profiles and boxes can share one exit.
 
 ## Commands
 

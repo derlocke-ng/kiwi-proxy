@@ -1065,7 +1065,9 @@ class LeasePicker(Adw.Dialog):
         self.rows: list[Adw.ActionRow] = []
         where = f" in {country.upper()}" if country else ""
         super().__init__(
-            title=f"Exit through {module}{where}", content_width=720, content_height=780
+            title=f"{choices[1]}{where}" if choices else f"Exit through {module}{where}",
+            content_width=720,
+            content_height=780,
         )
         header, cancel, self.use_button = _dialog_header("Use", self._on_use)
         cancel.connect("clicked", lambda *_: self.close())

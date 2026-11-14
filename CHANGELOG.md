@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.24.1
+
+- The picker for an exit option is titled after the option ("City in DE"), not
+  "Exit through …".
+
 ## 0.24.0
 
 - **An exit option can be picked from a list the module gives** (a `Setting` of
