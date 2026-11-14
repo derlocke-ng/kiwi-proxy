@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.0
+
+- **An exit's details can change an option on the running exit**, for options
+  the module marks as changeable (`live_options`): the row has Choose…, and the
+  choice is applied at once through the module's `renew`. kiwi-plugin-9proxy
+  0.6.1 uses it to put an IP from today's list back on an exit. New IP clears
+  that choice first, so it takes a new one.
+
 ## 0.24.1
 
 - The picker for an exit option is titled after the option ("City in DE"), not

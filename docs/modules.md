@@ -189,6 +189,13 @@ a country you have not used today, it takes a new address, which uses one IP
 from your 9proxy balance. **New IP** in the exit's details (or
 `kiwi-proxy renew EXIT`) always takes a new one.
 
+To go back to an address you used earlier today, open the exit's details and
+use **An IP from today's list → Choose…**. The address is put on the exit's
+port at once and costs nothing.
+
+Each 9proxy exit has one address. For a second address, add a second exit with
+source 9proxy (or **Duplicate** in an exit's menu); it gets its own port.
+
 One 9proxy daemon serves ten ports, 60000 to 60009, and each new 9proxy exit
 gets the next free one. An eleventh exit is refused. So up to ten 9proxy exits
 can be up at once, each with its own country, filters and address, and any

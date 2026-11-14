@@ -911,6 +911,19 @@ class ExitDetails(Adw.Dialog):
             self.renew_button.connect("clicked", self._on_renew)
             self.renew_row.add_suffix(self.renew_button)
             up.add(self.renew_row)
+            # An option the module can change on a running exit (9proxy: back to
+            # an IP from today's list, at no cost): picked here, applied at once.
+            for opt in providers.exit_options(ex.endpoint.module):
+                if opt.key in self._live_options():
+                    row = Adw.ActionRow(
+                        title=opt.title,
+                        subtitle=ex.endpoint.options.get(opt.key) or "not chosen",
+                        use_markup=False,
+                    )
+                    choose = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+                    choose.connect("clicked", self._on_live_option, opt, row)
+                    row.add_suffix(choose)
+                    up.add(row)
         up.add(_row("Resolve through", _resolve_label(ex.dns)))
         lists = ", ".join(BLOCKLIST_LABELS.get(n, (n,))[0].lower() for n in ex.dns.blocklists)
         up.add(_row("Ad-blocking", lists or "off"))
@@ -954,11 +967,47 @@ class ExitDetails(Adw.Dialog):
         dialog.connect("response", self._on_renew_answer)
         dialog.present(self)
 
+    def _live_options(self) -> tuple[str, ...]:
+        try:
+            return tuple(
+                getattr(providers.get_provider(self.ex.endpoint.module), "live_options", ())
+            )
+        except providers.ProviderError:
+            return ()
+
+    def _on_live_option(self, _button, opt, row) -> None:
+        def picked(value, lease) -> None:
+            if not value:
+                return
+            self.ex.endpoint.options[opt.key] = value
+            exits.save(self.ex)
+            row.set_subtitle("changing…")
+
+            def done(result) -> None:
+                lines, info = result
+                row.set_subtitle(lease.label if lease and lease.label else value)
+                self.renew_row.set_subtitle(" · ".join(lines[:2]) or "done")
+                if self._on_changed:
+                    self._on_changed(self.ex)
+
+            worker.run(lambda: gateway.renew(self.ex), done, lambda exc: row.set_subtitle(str(exc)))
+
+        LeasePicker(
+            self.ex.endpoint.module,
+            self.ex.endpoint.country,
+            self.ex.endpoint.options.get(opt.key),
+            picked,
+            choices=(opt.key, opt.title),
+        ).present(self)
+
     def _on_renew_answer(self, _dialog, response: str) -> None:
         if response != "renew":
             return
         self.renew_button.set_sensitive(False)
         self.renew_row.set_subtitle("asking…")
+        # A new IP, not the one picked from a list before.
+        if any(self.ex.endpoint.options.pop(key, None) for key in self._live_options()):
+            exits.save(self.ex)
 
         def done(result) -> None:
             lines, info = result
