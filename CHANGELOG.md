@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.27.1
+
+- The wallet page works with libadwaita 1.5 (Ubuntu 24.04): its buttons were
+  rows of a kind that came in 1.6. 0.27.0's release stopped on this in CI.
+
 ## 0.27.0
 
 - **Wallets: a module's accounts.** A module can keep accounts of its own and

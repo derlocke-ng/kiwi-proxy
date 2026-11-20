@@ -870,3 +870,9 @@ def test_the_wallet_dialogs_list_and_show_an_account(monkeypatch):
     assert page._watch_id, "a wallet waiting for a top-up is asked again"
     page._on_closed()
     assert not page._watch_id
+    from kiwi_proxy.ui import accounts
+
+    monkeypatch.setattr(accounts, "HAS_BUTTON_ROW", False)  # libadwaita 1.5 (Ubuntu 24.04)
+    older = AccountDialog("mysterium", acc)
+    assert [r.get_title() for r in older._action_rows] == ["Register now"]
+    older._on_closed()

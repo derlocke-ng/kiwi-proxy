@@ -23,6 +23,19 @@ def plural_title(noun: str) -> str:
     return noun[:1].upper() + noun[1:] + "s"
 
 
+HAS_BUTTON_ROW = hasattr(Adw, "ButtonRow")  # libadwaita 1.6; Ubuntu 24.04 has 1.5
+
+
+def _button_row(title: str) -> Adw.PreferencesRow:
+    """A row that is a button: Adw.ButtonRow where libadwaita has it, else an
+    activatable row. Both emit "activated"."""
+    if HAS_BUTTON_ROW:
+        return Adw.ButtonRow(title=title)
+    row = Adw.ActionRow(title=title, activatable=True, use_markup=False)
+    row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+    return row
+
+
 def _status_label(page: Adw.PreferencesPage) -> Gtk.Label:
     label = Gtk.Label(wrap=True, xalign=0, visible=False)
     label.add_css_class("dim-label")
@@ -165,10 +178,10 @@ class AccountDialog(Adw.Dialog):
         self.name_row = Adw.EntryRow(title="Name", text=acc.name, show_apply_button=True)
         self.name_row.connect("apply", self._on_rename)
         manage.add(self.name_row)
-        export = Adw.ButtonRow(title="Export…")
+        export = _button_row("Export…")
         export.connect("activated", self._on_export)
         manage.add(export)
-        remove = Adw.ButtonRow(title=f"Remove {self.noun}…")
+        remove = _button_row(f"Remove {self.noun}…")
         remove.add_css_class("destructive-action")
         remove.connect("activated", self._on_remove)
         manage.add(remove)
@@ -220,7 +233,7 @@ class AccountDialog(Adw.Dialog):
             self.main.add(row)
             self._main_rows.append(row)
         for action in acc.actions:
-            button = Adw.ButtonRow(title=action.label)
+            button = _button_row(action.label)
             button.connect("activated", self._on_action, action)
             self.actions.add(button)
             self._action_rows.append(button)
