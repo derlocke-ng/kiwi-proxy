@@ -13,7 +13,7 @@ import socket
 import ssl
 from urllib.parse import urlparse
 
-from .models import Endpoint, ExitInfo
+from .models import DIRECT_HOST, Endpoint, ExitInfo
 
 DEFAULT_GEO_URL = "https://ifconfig.co/json"
 # Asked in turn when measuring an exit: an ip-echo service may refuse a hosting
@@ -36,6 +36,10 @@ def parse(spec: str) -> tuple[Endpoint, str | None]:
     keyring and then forget.
     """
     spec = spec.strip()
+    if spec.lower() == DIRECT_HOST:
+        # No proxy: this machine's own connection, still through the gateway's
+        # resolver and blocklists.
+        return Endpoint(host=DIRECT_HOST, port=0), None
     if "://" in spec:
         url = urlparse(spec)
         if url.scheme not in ("socks5", "socks5h", "http", "https"):

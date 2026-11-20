@@ -8,14 +8,16 @@ container whose network namespace (a separate network stack with its own routes
 and firewall) has exactly one way out, the exit's upstream. Browsers, testing
 tools and other containers join that namespace, and programs on the host can
 use the exit as a SOCKS5 port. If the gateway stops, everything that uses it
-loses its connection, and nothing falls back to a direct connection.
+loses its connection, and nothing falls back to a direct connection. When an
+app should go out over your own connection but keep its gateway and kiwi's
+ad-blocking, you make that choice explicit with a **Direct** exit.
 
 kiwi-proxy is part of the Kiwi desktop. kiwi-fox (browser profiles),
 kiwi-custodia (distro boxes) and kiwi-pentesting use its exits, and a
 kiwi-server machine can host exits for the whole mesh with the module in this
 repository.
 
-- Latest release: **v0.25.0**, in the
+- Latest release: **v0.26.0**, in the
   [Kiwi catalog](https://kiwi-network.eu/docs/desktop/catalogs/) (user scope,
   no root needed)
 - Runs on: Linux with rootless Podman and Python 3.12 or newer. CI runs the

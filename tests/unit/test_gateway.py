@@ -775,3 +775,26 @@ def test_heal_takes_a_vpn_exit_down_when_its_tunnel_ended(new_exit, fake, stamps
     fake.rm(paths.provider_container_name("fakevpn", "x1"))
     assert gateway.heal() == [f"{gw.name}: the VPN tunnel ended; taken down"]
     assert gw.name not in fake.containers
+
+
+def test_a_direct_exit_has_no_proxy_but_kiwis_resolver_and_lists(monkeypatch):
+    from kiwi_proxy import endpoint, exits, gateway
+    from kiwi_proxy.models import DnsConfig
+
+    ep, password = endpoint.parse("direct")
+    assert ep.direct and password is None and ep.label.startswith("direct")
+    assert not endpoint.parse("socks5://h:1080")[0].direct
+    ex = exits.create("home", ep, dns=DnsConfig(mode="resolver", blocklists=["oisd-big"]))
+    assert exits.load(ex.id).endpoint.direct  # survives the store
+    plan = gateway.plan(ex)  # nothing is dialled or resolved
+    assert (plan.ip, plan.port, plan.network) == ("", 0, "pasta")
+    spec = gateway.gateway_spec(ex, plan.ip, endpoint_port=plan.port, network=plan.network)
+    assert spec.env["KF_UPSTREAM"] == "direct" and spec.env["KF_OPEN"] == "1"
+    assert "KF_ENDPOINT_IP" not in spec.env and spec.network == "pasta"
+    assert spec.env["KF_BLOCKLIST"]  # the lists still apply
+    assert gateway.is_tunnel(ex)  # members get TCP and UDP: no tun2socks for a box
+    assert gateway.tunnel_of(ex) is None and gateway.tunnel_passes(ex) is None
+    ex.dns.mode = "remote"
+    monkeypatch.setattr(gateway.podman, "available", lambda: True)
+    with pytest.raises(gateway.GatewayError, match="direct exit resolves names itself"):
+        gateway.up(ex)

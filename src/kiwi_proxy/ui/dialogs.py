@@ -38,6 +38,7 @@ BLOCKLIST_LABELS = {
     "oisd-nsfw": ("Adult content", "oisd nsfw"),
 }
 SOCKS5 = "SOCKS5 endpoint"
+DIRECT = "Direct (no proxy)"
 _UPSTREAM_LABELS = {
     "quad9": "Quad9 · blocks malware",
     "cloudflare": "Cloudflare",
@@ -158,7 +159,8 @@ class ExitEditor(Adw.Dialog):
         )
         self.name_row = Adw.EntryRow(title="Name")
         upstream.add(self.name_row)
-        self.source_row = _combo("Source", [SOCKS5, *self._modules])
+        # Direct goes last, so a module keeps its place (1 + its index).
+        self.source_row = _combo("Source", [SOCKS5, *self._modules, DIRECT])
         self.source_row.connect("notify::selected", self._on_source)
         upstream.add(self.source_row)
         self.endpoint_row = Adw.EntryRow(title="Endpoint (socks5://user:pass@host:port)")
@@ -354,13 +356,19 @@ class ExitEditor(Adw.Dialog):
     @property
     def module(self) -> str | None:
         i = self.source_row.get_selected()
-        return self._modules[i - 1] if i > 0 else None
+        return self._modules[i - 1] if 0 < i <= len(self._modules) else None
+
+    @property
+    def direct(self) -> bool:
+        return self.source_row.get_selected() == len(self._modules) + 1
 
     def _load(self, ex) -> None:
         self.name_row.set_text(ex.name)
         if ex.endpoint.module in self._modules:
             self.source_row.set_selected(1 + self._modules.index(ex.endpoint.module))
             self._set_lease(ex.endpoint.lease)
+        elif ex.endpoint.direct:
+            self.source_row.set_selected(len(self._modules) + 1)
         else:
             self.endpoint_row.set_text(endpoint_text(ex.endpoint))
         self._want_country = (ex.endpoint.country or "").upper() or None
@@ -431,7 +439,7 @@ class ExitEditor(Adw.Dialog):
         module = self.module
         lists = selection.supports(module)
         config = providers.takes_config(module)
-        self.endpoint_row.set_visible(module is None)
+        self.endpoint_row.set_visible(module is None and not self.direct)
         # A module that hands out its own leases (9proxy's ports) has nothing to choose.
         self.lease_row.set_visible(
             module is not None and not lists and not config and not providers.assigns_leases(module)
@@ -646,6 +654,8 @@ class ExitEditor(Adw.Dialog):
                 ep.options = providers.clean_options(
                     module, {k: r.get_text() for k, r in self._option_rows.items()}
                 )
+        elif self.direct:
+            ep, _none = endpoint.parse("direct")
         else:
             text = self.endpoint_row.get_text().strip()
             if (

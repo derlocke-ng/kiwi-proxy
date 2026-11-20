@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.26.0
+
+- **Direct exits: no proxy, still sealed.** `kiwi-proxy add NAME direct` (in
+  the app, **Direct (no proxy)** under Source) makes an exit whose gateway goes
+  out over this machine's own connection, TCP and UDP, with kiwi's resolver
+  and blocklists in front. For apps that should not use a proxy but should
+  keep their gateway and ad-blocking, such as a plain Kiwi Fox browser or a
+  Custodia box. Checked on the VM: it leaves from the VM's own address, refuses
+  a blocklisted name, serves its host SOCKS5 port, and a Custodia box on it
+  gets TCP and UDP. Needs the gateway image rebuilt once: `kiwi-proxy setup`.
+
 ## 0.25.0
 
 - **An exit's details can change an option on the running exit**, for options

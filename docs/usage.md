@@ -24,8 +24,8 @@ gateway. It has no route of its own, so when the gateway stops, the member has
 no connection at all.
 
 UDP is not forwarded, so QUIC, WebRTC media and plain DNS do not leave the
-gateway. The one exception is a [VPN exit](modules.md#vpn-exits), which carries
-TCP and UDP through its tunnel.
+gateway. The exceptions are a [VPN exit](modules.md#vpn-exits), which carries
+TCP and UDP through its tunnel, and a [Direct exit](#direct-exits).
 
 ## Add an exit
 
@@ -41,6 +41,7 @@ An endpoint is the address of the upstream. You can write it in these forms:
 |---|---|
 | A URL | `socks5://user:pass@host:port`, also `socks5h://…` |
 | The format many proxy vendors use | `host:port` or `host:port:user:pass` |
+| No proxy at all | `direct`, see [Direct exits](#direct-exits) |
 
 `http://…` and `https://…` URLs are accepted as well, but only their host,
 port, user and password are read. The upstream must still be a SOCKS5 proxy:
@@ -56,6 +57,22 @@ two.
 A new exit starts with the DNS settings from your preferences (see
 [DNS and ad-blocking](dns.md#preferences-for-new-exits)). `--notes TEXT` adds a
 note to the exit.
+
+### Direct exits
+
+```bash
+kiwi-proxy add home direct
+```
+
+A **Direct** exit has no upstream: its gateway sends traffic out over this
+machine's own connection. It is for apps that should not use a proxy but should
+still be sealed in a gateway and get kiwi's resolver and
+[blocklists](dns.md#blocklists). A member reaches the internet, TCP and UDP
+alike. The gateway runs no firewall, since
+there is nothing to keep the traffic to; the exit's IP address is your own. A
+Direct exit always uses the resolver DNS mode. In the app, it is **Direct (no
+proxy)** under **Source**. Direct exits need the gateway image of kiwi-proxy
+0.26.0 or newer: run `kiwi-proxy setup` once after updating.
 
 ## Bring an exit up and down
 

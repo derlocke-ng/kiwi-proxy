@@ -795,7 +795,7 @@ async def main() -> int:
     LOG.info(
         "listening on 127.0.0.1:%s -> %s:%s (%s, %s)",
         listen_port,
-        host or "the tunnel",
+        host or ("this machine's connection" if os.environ.get("KF_OPEN") else "the tunnel"),
         port,
         "authenticated" if up.authed else "no auth",
         mode,

@@ -66,7 +66,11 @@ CONTROL_RULE=""
 if [ -n "${KF_CONTROL_IP:-}" ]; then
     CONTROL_RULE="ip daddr ${KF_CONTROL_IP} tcp dport ${KF_CONTROL_PORT:-9052} accept"
 fi
-if [ "$KF_UPSTREAM" = direct ]; then
+if [ "$KF_UPSTREAM" = direct ] && [ -n "${KF_OPEN:-}" ]; then
+    # A Direct exit: no proxy and no tunnel, this machine's own connection. Nothing
+    # is sealed; what it adds is the resolver and the blocklists.
+    log "firewall: none (a direct exit: this machine's own connection)"
+elif [ "$KF_UPSTREAM" = direct ]; then
     # The tunnel's own firewall (gluetun's) allows only the tunnel and its server:
     # it stays as it is, nothing here flushes it.
     log "firewall: the tunnel's own (its kill switch); traffic leaves only through the tunnel"

@@ -188,6 +188,10 @@ def gateway_spec(
     upstream = (
         {"KF_UPSTREAM": "direct"}
         if tunnel
+        # A Direct exit: the same forwarder mode, in the gateway's own namespace
+        # (pasta: this machine's connection), which has no firewall to keep.
+        else {"KF_UPSTREAM": "direct", "KF_OPEN": "1"}
+        if ex.endpoint.direct
         else {
             "KF_ENDPOINT_IP": endpoint_ip,
             "KF_ENDPOINT_PORT": str(endpoint_port or ex.endpoint.port),
@@ -312,7 +316,7 @@ def tunnel_of(ex: Exit) -> str | None:
 def is_tunnel(ex: Exit) -> bool:
     """Does this exit's namespace route through a tunnel (TCP and UDP), so a member
     needs no SOCKS5 to reach anything? Kiwi Custodia leaves its tun2socks out then."""
-    return tunnel_of(ex) is not None
+    return ex.endpoint.direct or tunnel_of(ex) is not None
 
 
 def _options(method, ex: Exit) -> dict:
@@ -387,6 +391,9 @@ def plan(ex: Exit, password: str | None = None, *, measure: bool = True) -> Endp
     before anything uses it."""
     if providers.manages(ex.endpoint.module):
         return ensure_provider(ex)
+    if ex.endpoint.direct:
+        # Nothing to reach or resolve: the gateway's own namespace is the way out.
+        return EndpointPlan("", 0, "pasta", None, ["direct: this machine's own connection"])
 
     try:
         endpoint.reachable(ex.endpoint)
@@ -529,6 +536,8 @@ def up(
     if not podman.available():
         raise GatewayError("podman not found")
     notes: list[str] = []
+    if ex.endpoint.direct and ex.dns.mode != "resolver":
+        raise GatewayError(f"exit {ex.name!r}: a direct exit resolves names itself (DNS: resolver)")
     if tunnel := tunnel_of(ex):
         if ex.dns.mode != "resolver":
             raise GatewayError(

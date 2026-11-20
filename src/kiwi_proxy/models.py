@@ -19,6 +19,10 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# The host a Direct exit carries in place of a proxy's (Endpoint.direct).
+DIRECT_HOST = "direct"
+
+
 class Endpoint(Strict):
     """A SOCKS5 endpoint. Every provider module exposes exactly this shape."""
 
@@ -45,7 +49,15 @@ class Endpoint(Strict):
     options: dict[str, str] = Field(default_factory=dict)
 
     @property
+    def direct(self) -> bool:
+        """No proxy at all: the exit's namespace uses this machine's own
+        connection, with the gateway's resolver and blocklists (a Direct exit)."""
+        return self.module is None and self.host == DIRECT_HOST and self.port == 0
+
+    @property
     def label(self) -> str:
+        if self.direct:
+            return "direct (this machine's connection)"
         who = f"{self.module}:" if self.module else ""
         return f"{who}{self.host}:{self.port}"
 
