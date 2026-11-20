@@ -131,6 +131,48 @@ class Country:
         return countries.label(self.code, self.count)
 
 
+@dataclass(frozen=True)
+class AccountAction:
+    """Something the module can do with one account (Mysterium: register a
+    wallet). ``confirm``, when set, is asked before it runs."""
+
+    key: str
+    label: str
+    confirm: str = ""
+
+
+@dataclass(frozen=True)
+class Account:
+    """One account a module holds (a Mysterium wallet): its id, a name the user
+    gave it, one line on its state, and the address to copy or pay to with a
+    note on how. A module with accounts has an ``account_noun`` ("wallet") and
+    the hooks ``accounts``, ``account_new_settings``, ``account_new``,
+    ``account_history``, ``account_act``, ``account_rename``, ``account_export``,
+    ``account_remove`` and ``account_of`` (which account an exit's options mean);
+    an exit picks one through an exit option named by ``account_option``."""
+
+    id: str
+    name: str
+    state: str = ""
+    address: str = ""
+    address_note: str = ""
+    detail: str = ""
+    actions: tuple[AccountAction, ...] = ()
+    # Waiting on something outside (a top-up): the app asks again every 30 s
+    # while the account is open, as Mysterium's own app does.
+    watch: bool = False
+
+
+@dataclass(frozen=True)
+class HistoryItem:
+    """One line of an account's history: when, what happened, the amount."""
+
+    when: str
+    what: str
+    amount: str = ""
+    detail: str = ""
+
+
 def countries_for(prov: Provider, ctx: ProviderContext) -> list[Country]:
     """The countries a module offers, by name — the module's own list, or every
     country there is when it has none to give (and for modules from before the

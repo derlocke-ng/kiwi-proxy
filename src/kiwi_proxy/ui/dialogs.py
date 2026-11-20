@@ -429,10 +429,23 @@ class ExitEditor(Adw.Dialog):
         self.account_row.set_visible(state is not None)
         if state is not None:
             self.account_row.set_subtitle(state[1])
-            self.account_button.set_label("Change…" if state[0] else "Set…")
+            if providers.has_accounts(module):
+                from .accounts import plural_title
+
+                noun = providers.account_noun(module)
+                self.account_row.set_title(plural_title(noun))
+                self.account_button.set_label("Manage…")
+            else:
+                self.account_row.set_title("Account")
+                self.account_button.set_label("Change…" if state[0] else "Set…")
 
     def _on_account(self, *_args) -> None:
         module = self.module
+        if providers.has_accounts(module):
+            from .accounts import AccountsDialog
+
+            AccountsDialog(module, on_changed=lambda *_a: self._show_account(module)).present(self)
+            return
         ModuleConfigDialog(module, lambda *_a: self._show_account(module)).present(self)
 
     def _on_source(self, *_args) -> None:
@@ -1346,19 +1359,37 @@ class ModuleConfigDialog(Adw.Dialog):
     file is chosen, a password is typed unechoed, text is typed. Apply hands the
     values to the module's ``configure`` and shows what it says."""
 
-    def __init__(self, name: str, on_done=None) -> None:
+    def __init__(
+        self,
+        name: str,
+        on_done=None,
+        *,
+        title: str | None = None,
+        settings: list | None = None,
+        apply=None,
+        primary: str = "Apply",
+        description: str | None = None,
+    ) -> None:
+        """The module's own settings and ``configure`` by default; another form
+        (a new Mysterium wallet) with ``settings`` and ``apply(values) -> lines``."""
         self.name = name
         self.prov, self.manifest = providers.load(name)
         self.ctx = providers.context_for(name, self.manifest)
         super().__init__(
-            title=f"Configure {self.manifest.title}", content_width=560, content_height=460
+            title=title or f"Configure {self.manifest.title}",
+            content_width=560,
+            content_height=460,
         )
         self._on_done = on_done
+        self._settings = list(settings) if settings is not None else self.prov.settings(self.ctx)
+        self._apply = apply or (lambda values: self.prov.configure(self.ctx, values))
         self._files: dict[str, str] = {}
         self.rows: dict[str, Gtk.Widget] = {}
         page = Adw.PreferencesPage()
-        group = Adw.PreferencesGroup(description=self.manifest.notes or self.manifest.description)
-        for st in self.prov.settings(self.ctx):
+        group = Adw.PreferencesGroup(
+            description=description or self.manifest.notes or self.manifest.description
+        )
+        for st in self._settings:
             title = st.title + ("" if st.required else " (optional)")
             if st.kind == "file":
                 row = Adw.ActionRow(title=title, subtitle=st.help or "no file chosen")
@@ -1378,17 +1409,18 @@ class ModuleConfigDialog(Adw.Dialog):
             self.rows[st.key] = row
         page.add(group)
 
-        self.state_row = _row("Now", self.prov.configured(self.ctx) or "not configured")
-        state = Adw.PreferencesGroup()
-        state.add(self.state_row)
-        page.add(state)
+        if settings is None:
+            self.state_row = _row("Now", self.prov.configured(self.ctx) or "not configured")
+            state = Adw.PreferencesGroup()
+            state.add(self.state_row)
+            page.add(state)
         status = Adw.PreferencesGroup()
         self.status_label = Gtk.Label(wrap=True, xalign=0, visible=False)
         self.status_label.add_css_class("dim-label")
         status.add(self.status_label)
         page.add(status)
 
-        header, cancel, self.apply_button = _dialog_header("Apply", self._on_apply)
+        header, cancel, self.apply_button = _dialog_header(primary, self._on_apply)
         cancel.connect("clicked", lambda *_: self.close())
         view = Adw.ToolbarView()
         view.add_top_bar(header)
@@ -1413,7 +1445,7 @@ class ModuleConfigDialog(Adw.Dialog):
         """The values as typed and chosen, or ValueError naming what is missing.
         Side-effect free, so it can be tested without a display server."""
         values: dict[str, str] = {}
-        for st in self.prov.settings(self.ctx):
+        for st in self._settings:
             if st.kind == "file":
                 value = self._files.get(st.key, "")
             else:
@@ -1445,7 +1477,7 @@ class ModuleConfigDialog(Adw.Dialog):
             self.apply_button.set_sensitive(True)
             self._say(str(exc))
 
-        worker.run(lambda: self.prov.configure(self.ctx, values), done, failed)
+        worker.run(lambda: self._apply(values), done, failed)
 
 
 class ModulesDialog(Adw.Dialog):
@@ -1489,7 +1521,14 @@ class ModulesDialog(Adw.Dialog):
             has_settings = bool(prov.settings(providers.context_for(name, manifest)))
         except providers.ProviderError:
             has_settings = False
-        if has_settings:
+        if providers.has_accounts(name):
+            noun = providers.account_noun(name)
+            from .accounts import plural_title
+
+            accounts = Gtk.Button(label=f"{plural_title(noun)}…", valign=Gtk.Align.CENTER)
+            accounts.connect("clicked", self._on_accounts, name, row)
+            row.add_suffix(accounts)
+        elif has_settings:
             configure = Gtk.Button(label="Configure…", valign=Gtk.Align.CENTER)
             configure.connect("clicked", self._on_configure, name, row)
             row.add_suffix(configure)
@@ -1545,6 +1584,16 @@ class ModulesDialog(Adw.Dialog):
                 self._on_configured(name)
 
         ModuleConfigDialog(name, done).present(self)
+
+    def _on_accounts(self, _button, name: str, row: Adw.ActionRow) -> None:
+        def changed(_name: str) -> None:
+            self._status(name, row)
+            if self._on_configured:
+                self._on_configured(name)
+
+        from .accounts import AccountsDialog
+
+        AccountsDialog(name, toast=self._toast, on_changed=changed).present(self)
 
     def _on_setup(self, _button: Gtk.Button, name: str, row: Adw.ActionRow) -> None:
         from .. import setup

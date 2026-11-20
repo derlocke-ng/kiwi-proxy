@@ -834,3 +834,39 @@ def test_a_maintenance_job_closes_preferences_and_runs_the_windows_action():
     dialog.present(win)
     page.buttons["win.setup"].emit("clicked")
     assert win.ran == ["win.setup"]
+
+
+def test_the_wallet_dialogs_list_and_show_an_account(monkeypatch):
+    """A module with accounts gets a Wallets… button; the list and one wallet's
+    page build from what the module says, history included."""
+    from kiwi_proxy.providers.base import Account, AccountAction, HistoryItem
+    from kiwi_proxy.ui import worker
+    from kiwi_proxy.ui.accounts import AccountDialog, AccountsDialog, plural_title
+
+    acc = Account(
+        id="0xaa", name="First", state="waiting for its first top-up", address="0xchan",
+        address_note="Top-up address: send MYST on Polygon only", detail="Registers itself.",
+        actions=(AccountAction("register", "Register now", confirm="Costs 0.1 MYST."),), watch=True,
+    )  # fmt: skip
+    monkeypatch.setattr(providers, "account_noun", lambda name: "wallet")
+    monkeypatch.setattr(
+        providers, "load", lambda name: (object(), type("M", (), {"title": "Mysterium"})())
+    )
+    monkeypatch.setattr(providers, "accounts", lambda name, refresh=False, only=None: [acc])
+    monkeypatch.setattr(
+        providers,
+        "account_history",
+        lambda name, a: [HistoryItem("2026-11-20 06:00", "Session · DE", "−0.0020 MYST")],
+    )
+    monkeypatch.setattr(worker, "run", lambda work, done, failed=None: done(work()))
+    assert plural_title("wallet") == "Wallets"
+    lst = AccountsDialog("mysterium")
+    assert [r.get_title() for r in lst._rows] == ["First"]
+    page = AccountDialog("mysterium", acc)
+    titles = [r.get_title() for r in page._main_rows]
+    assert titles[0] == "Top-up address: send MYST on Polygon only"
+    assert [r.get_title() for r in page._action_rows] == ["Register now"]
+    assert [r.get_title() for r in page._history_rows] == ["Session · DE"]
+    assert page._watch_id, "a wallet waiting for a top-up is asked again"
+    page._on_closed()
+    assert not page._watch_id

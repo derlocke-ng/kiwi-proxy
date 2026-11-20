@@ -260,6 +260,34 @@ adds a **Choose…** button that shows what the module's
 `option_choices(ctx, key, country) -> list[Lease]` returns. kiwi-plugin-9proxy
 lists the addresses on the account's list for today this way.
 
+### Accounts
+
+A module that holds accounts of its own (kiwi-plugin-myst: wallets) sets
+`account_noun` ("wallet") and `account_option` (the exit option that picks one)
+and has these methods. The app then shows **Wallets…** instead of
+**Configure…**, and `module accounts` and `module account` reach them.
+
+| Method | Returns |
+|---|---|
+| `accounts(ctx, *, refresh, only)` | `Account`s: id, name, one line on its state, an address with a note on how to pay to it, detail, `AccountAction`s and `watch` (ask again every 30 s while open). Without `refresh`, what it last knew. |
+| `account_new_settings(ctx)`, `account_new(ctx, values)` | The form for a new account, and lines on what was made. |
+| `account_history(ctx, id)` | `HistoryItem`s: when, what, amount, detail. |
+| `account_act(ctx, id, key)` | Lines; runs one of the account's actions. |
+| `account_rename`, `account_export(ctx, id, dest)`, `account_remove` | Rename; the exported file's path; lines. |
+| `account_of(ctx, options)` | The account an exit with these options uses. |
+
+Importing an account is the module's `settings` and `configure`. kiwi-proxy
+refuses to remove an account that an exit uses (`providers.account_users`).
+
+### Naming the provider container
+
+`lease_key(ctx, *, lease, country, options) -> str` names the provider container
+of an exit from more than its lease. kiwi-plugin-myst returns the wallet and
+the node (`w88994eb3-0xabc…`), so exits on different wallets get nodes of their
+own. kiwi-proxy then uses the key wherever it names that container
+(`selection.lease_for`) and passes it to `up` as the lease, with the exit's
+options.
+
 ### A config file per exit
 
 `check_config(text) -> str` makes a module take one (`--config FILE`, the app's

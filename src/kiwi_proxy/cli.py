@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import getpass
 import json
 import os
@@ -685,6 +686,127 @@ def _module_status_line(name: str) -> tuple[str, bool]:
     return f"{name:12} {img} · {run}{req}{cfg}", ok
 
 
+def _setting_values(known: dict, given: list[str], ask: list[str] | None) -> dict[str, str]:
+    """KEY=VALUE pairs and --ask KEY prompts for a module's settings; ValueError
+    names what is wrong or missing."""
+    values: dict[str, str] = {}
+    for item in given:
+        key, sep, value = item.partition("=")
+        if not sep or key not in known:
+            raise ValueError(f"{item!r}: expected KEY=VALUE with KEY one of {', '.join(known)}")
+        values[key] = value
+    for key in ask or []:
+        if key not in known:
+            raise ValueError(f"--ask {key}: not one of {', '.join(known)}")
+        import getpass
+
+        values[key] = getpass.getpass(f"{known[key].title}: ")
+    missing = [k for k, st in known.items() if st.required and k not in values]
+    if missing:
+        raise ValueError(f"missing: {', '.join(missing)}")
+    return values
+
+
+def _find_account(name: str, ref: str):
+    """An account by its id, the start of it, or its name."""
+    found = providers.accounts(name)
+    low = ref.lower()
+    exact = [x for x in found if x.id.lower() == low or x.name == ref]
+    if exact:
+        return exact[0]
+    starts = [
+        x
+        for x in found
+        if x.id.lower().startswith(low) or x.id.lower().removeprefix("0x").startswith(low)
+    ]
+    if len(starts) == 1:
+        return starts[0]
+    noun = providers.account_noun(name)
+    if not starts:
+        raise providers.ProviderError(f"no {noun} {ref!r} (kiwi-proxy module accounts {name})")
+    raise providers.ProviderError(f"{ref!r} fits more than one {noun}; give more of the id")
+
+
+def _module_accounts(a: argparse.Namespace) -> int:
+    if not providers.has_accounts(a.name):
+        return _fail(f"{a.name} keeps no accounts")
+    found = providers.accounts(a.name, refresh=a.refresh)
+    if a.json:
+        return _json([dataclasses.asdict(x) for x in found])
+    noun = providers.account_noun(a.name)
+    if not found:
+        _p(f"no {noun}s; make one with: kiwi-proxy module account {a.name} new")
+        return 0
+    for acc in found:
+        users = providers.account_users(a.name, acc.id)
+        used = f" · used by {', '.join(users)}" if users else ""
+        _p(f"{acc.id}  {acc.name}  {acc.state}{used}")
+    return 0
+
+
+def _module_account(a: argparse.Namespace) -> int:
+    name = a.name
+    if not providers.has_accounts(name):
+        return _fail(f"{name} keeps no accounts")
+    noun = providers.account_noun(name)
+    try:
+        if a.account_cmd == "new":
+            known = {st.key: st for st in providers.account_new_settings(name)}
+            values = _setting_values(known, a.values, a.ask)
+            for line in providers.account_new(name, values):
+                _p(f"  {line}")
+            return 0
+        acc = _find_account(name, a.account)
+        if a.account_cmd == "show":
+            if a.refresh:
+                acc = (providers.accounts(name, refresh=True, only=acc.id) or [acc])[0]
+            _p(f"{noun}    {acc.name}")
+            _p(f"  id      {acc.id}")
+            _p(f"  state   {acc.state or 'not known yet'}")
+            if acc.address:
+                _p(
+                    f"  address {acc.address}"
+                    + (f"  ({acc.address_note})" if acc.address_note else "")
+                )
+            if acc.detail:
+                _p(f"  detail  {acc.detail}")
+            if users := providers.account_users(name, acc.id):
+                _p(f"  used by {', '.join(users)}")
+            if acc.actions:
+                _p("  can     " + ", ".join(f"{x.key} ({x.label})" for x in acc.actions))
+            items = providers.account_history(name, acc.id)
+            _p("history" if items else "history: nothing yet")
+            for it in items:
+                amount = f"  {it.amount}" if it.amount else ""
+                detail = f"  {it.detail}" if it.detail else ""
+                _p(f"  {it.when}  {it.what}{amount}{detail}")
+            return 0
+        if a.account_cmd == "do":
+            keys = {x.key: x for x in acc.actions}
+            if a.action not in keys:
+                have = ", ".join(keys) or "none right now"
+                return _fail(f"{noun} {acc.name}: no action {a.action!r} (it can: {have})")
+            for line in providers.account_act(name, acc.id, a.action):
+                _p(f"  {line}")
+            return 0
+        if a.account_cmd == "rename":
+            providers.account_rename(name, acc.id, a.new_name)
+            _p(f"{noun} {acc.id} is now {a.new_name!r}")
+            return 0
+        if a.account_cmd == "export":
+            _p(f"exported to {providers.account_export(name, acc.id, a.dest)}")
+            return 0
+        if a.account_cmd == "rm":
+            for line in providers.account_remove(name, acc.id):
+                _p(f"  {line}")
+            return 0
+    except ValueError as exc:
+        return _fail(str(exc))
+    except providers.ProviderError as exc:
+        return _fail(str(exc))
+    return _fail(f"unknown: {a.account_cmd}")
+
+
 def cmd_module(a: argparse.Namespace) -> int:
     cmd = a.module_cmd
     if cmd == "list":
@@ -825,27 +947,20 @@ def cmd_module(a: argparse.Namespace) -> int:
             "(--ask KEY prompts for a password)"
         )
         return 0
+    if cmd == "accounts":
+        return _module_accounts(a)
+    if cmd == "account":
+        return _module_account(a)
     if cmd == "config":
         prov, manifest = providers.load(a.name)
         ctx = providers.context_for(a.name, manifest)
         known = {st.key: st for st in prov.settings(ctx)}
         if not known:
             return _fail(f"{a.name}: nothing to configure")
-        values: dict[str, str] = {}
-        for item in a.values:
-            key, sep, value = item.partition("=")
-            if not sep or key not in known:
-                return _fail(f"{item!r}: expected KEY=VALUE with KEY one of {', '.join(known)}")
-            values[key] = value
-        for key in a.ask or []:
-            if key not in known:
-                return _fail(f"--ask {key}: not a setting of {a.name} ({', '.join(known)})")
-            import getpass
-
-            values[key] = getpass.getpass(f"{known[key].title}: ")
-        missing = [k for k, st in known.items() if st.required and k not in values]
-        if missing:
-            return _fail(f"missing: {', '.join(missing)} (kiwi-proxy module settings {a.name})")
+        try:
+            values = _setting_values(known, a.values, a.ask)
+        except ValueError as exc:
+            return _fail(f"{exc} (kiwi-proxy module settings {a.name})")
         for line in prov.configure(ctx, values):
             _p(f"  {line}")
         if note := snapshot_items.auto_module(a.name):
@@ -1421,6 +1536,30 @@ def build_parser() -> argparse.ArgumentParser:
     mcf.add_argument("name")
     mcf.add_argument("values", nargs="*", metavar="KEY=VALUE")
     mcf.add_argument("--ask", action="append", metavar="KEY", help="prompt for KEY, unechoed")
+    mac = msub.add_parser("accounts", help="a module's accounts (Mysterium: wallets)")
+    mac.add_argument("name")
+    mac.add_argument("--refresh", action="store_true", help="ask for their state now (slow)")
+    mac.add_argument("--json", action="store_true")
+    ma = msub.add_parser("account", help="make, show, use, rename, export or remove one")
+    ma.add_argument("name")
+    masub = ma.add_subparsers(dest="account_cmd", required=True)
+    man = masub.add_parser("new", help="make a new one")
+    man.add_argument("values", nargs="*", metavar="KEY=VALUE")
+    man.add_argument("--ask", action="append", metavar="KEY", help="prompt for KEY, unechoed")
+    mash = masub.add_parser("show", help="its state, address and history")
+    mash.add_argument("account", help="its id, the start of it, or its name")
+    mash.add_argument("--refresh", action="store_true", help="ask for its state now")
+    mado = masub.add_parser("do", help="run one of its actions (Mysterium: register)")
+    mado.add_argument("account")
+    mado.add_argument("action")
+    mare = masub.add_parser("rename", help="give it another name")
+    mare.add_argument("account")
+    mare.add_argument("new_name")
+    maex = masub.add_parser("export", help="copy its key file into a folder")
+    maex.add_argument("account")
+    maex.add_argument("dest")
+    marm = masub.add_parser("rm", help="remove it (its key file is moved aside, not deleted)")
+    marm.add_argument("account")
     mu = msub.add_parser("up", help="bring a provider up and print its address")
     mu.add_argument("name")
     mu.add_argument("--lease")

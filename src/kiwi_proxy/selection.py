@@ -176,6 +176,8 @@ def for_exit(ex) -> Selection | None:
 def lease_for(ex) -> str | None:
     """The lease naming an exit's provider container (see lease_of), with a Tor
     of its own for a Tor Browser exit."""
+    if providers.keys_leases(ex.endpoint.module):
+        return _module_key(ex.endpoint)
     if ex.endpoint.lease:
         return ex.endpoint.lease
     if not wants_control(ex):
@@ -184,10 +186,19 @@ def lease_for(ex) -> str | None:
     return sel.key() if sel else None
 
 
+def _module_key(endpoint) -> str | None:
+    return providers.lease_key(
+        endpoint.module, endpoint.lease, endpoint.country, dict(endpoint.options or {})
+    )
+
+
 def lease_of(endpoint) -> str | None:
     """The lease that names the endpoint's provider container: its own lease, or
     for a module with a selection the selection's key (None: the module's shared
-    container, for an exit that selects nothing)."""
+    container, for an exit that selects nothing). A module that keys its
+    containers itself (Mysterium: wallet and node) gives the key."""
+    if providers.keys_leases(endpoint.module):
+        return _module_key(endpoint)
     if endpoint.lease:
         return endpoint.lease
     sel = of(endpoint)

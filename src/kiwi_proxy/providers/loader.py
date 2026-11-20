@@ -167,6 +167,122 @@ def clean_options(name: str | None, given: dict[str, str]) -> dict[str, str]:
     return out
 
 
+def keys_leases(name: str | None) -> bool:
+    """Does the module name its provider containers itself, from more than the
+    lease (Mysterium: the wallet and the node)?"""
+    if not name or not is_installed(name):
+        return False
+    try:
+        return callable(getattr(get_provider(name), "lease_key", None))
+    except ProviderError:
+        return False
+
+
+def lease_key(name: str, lease: str | None, country: str | None, options: dict) -> str | None:
+    """The module's key for the provider container of an exit with this lease,
+    country and options."""
+    prov, manifest = load(name)
+    return prov.lease_key(
+        context_for(name, manifest), lease=lease, country=country, options=options
+    )
+
+
+# ------------------------------------------------------------------ accounts
+def has_accounts(name: str | None) -> bool:
+    """Does the module hold accounts of its own (Mysterium: wallets)?"""
+    if not name or not is_installed(name):
+        return False
+    try:
+        return callable(getattr(get_provider(name), "accounts", None))
+    except ProviderError:
+        return False
+
+
+def account_noun(name: str) -> str:
+    """What the module calls one account: "wallet"; "account" when it does not say."""
+    try:
+        return getattr(get_provider(name), "account_noun", None) or "account"
+    except ProviderError:
+        return "account"
+
+
+def _account_hook(name: str, hook: str):
+    prov, manifest = load(name)
+    fn = getattr(prov, hook, None)
+    if not callable(fn):
+        raise ProviderError(f"{name} has no {hook}")
+    return fn, context_for(name, manifest)
+
+
+def accounts(name: str, *, refresh: bool = False, only: str | None = None) -> list:
+    """The module's accounts (``only``: that one). With ``refresh`` it asks for
+    their state now (slow: Mysterium starts a node); without, it says what it
+    last knew."""
+    fn, ctx = _account_hook(name, "accounts")
+    return list(fn(ctx, refresh=refresh, only=only))
+
+
+def account_new_settings(name: str) -> list:
+    fn, ctx = _account_hook(name, "account_new_settings")
+    return list(fn(ctx))
+
+
+def account_new(name: str, values: dict[str, str]) -> list[str]:
+    fn, ctx = _account_hook(name, "account_new")
+    return list(fn(ctx, values))
+
+
+def account_history(name: str, account: str) -> list:
+    fn, ctx = _account_hook(name, "account_history")
+    return list(fn(ctx, account))
+
+
+def account_act(name: str, account: str, action: str) -> list[str]:
+    fn, ctx = _account_hook(name, "account_act")
+    return list(fn(ctx, account, action))
+
+
+def account_rename(name: str, account: str, new_name: str) -> None:
+    fn, ctx = _account_hook(name, "account_rename")
+    fn(ctx, account, new_name)
+
+
+def account_export(name: str, account: str, dest: str) -> str:
+    """Write the account's key file to ``dest`` (a folder or a file); the path."""
+    fn, ctx = _account_hook(name, "account_export")
+    return str(fn(ctx, account, dest))
+
+
+def account_of(name: str, options: dict) -> str | None:
+    """The account an exit with these options uses (its own choice or the
+    module's default)."""
+    fn, ctx = _account_hook(name, "account_of")
+    return fn(ctx, dict(options or {}))
+
+
+def account_users(name: str, account: str) -> list[str]:
+    """The exits on this module that use the account."""
+    from .. import exits
+
+    out = []
+    for ex in exits.list_exits():
+        if ex.endpoint.module == name and account_of(name, ex.endpoint.options) == account:
+            out.append(ex.name)
+    return out
+
+
+def account_remove(name: str, account: str) -> list[str]:
+    """Remove an account no exit uses; the module keeps what it removes where it
+    can be put back, and says where."""
+    if users := account_users(name, account):
+        raise ProviderError(
+            f"{account_noun(name)} {account} is used by {', '.join(users)}; "
+            "move those exits to another first"
+        )
+    fn, ctx = _account_hook(name, "account_remove")
+    return list(fn(ctx, account))
+
+
 def takes_config(name: str | None) -> bool:
     """Does an exit on this module need a config file of its own (a VPN: its
     WireGuard or OpenVPN config)?"""

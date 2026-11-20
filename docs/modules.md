@@ -52,7 +52,8 @@ kiwi-proxy module config 9proxy username=YOU --ask password
 `module settings NAME` lists what the module asks for. `--ask KEY` asks for a
 value without showing what you type. `module status` and `module list` say
 when a module is not configured yet. In the app, the same settings are under
-**Preferences → Modules → Manage… → Configure…**.
+**Preferences → Modules → Manage… → Configure…**. Mysterium keeps several
+wallets instead, under **Wallets…**; see [Mysterium exits](#mysterium-exits).
 
 ## Choose where an exit leaves
 
@@ -201,6 +202,41 @@ gets the next free one. An eleventh exit is refused. So up to ten 9proxy exits
 can be up at once, each with its own country, filters and address, and any
 number of browser profiles and boxes can share one exit.
 
+## Mysterium exits
+
+A Mysterium exit pays for its connection from a **wallet**, a Mysterium
+identity with a balance in MYST. The module keeps as many wallets as you like;
+in the app they are under **Preferences → Modules → Manage… → Wallets…**.
+
+```bash
+kiwi-proxy module account mysterium new name=work --ask passphrase
+kiwi-proxy module accounts mysterium --refresh
+kiwi-proxy add myst-nl --module mysterium --country nl --opt wallet=work
+```
+
+- **Import** takes a wallet you already have: the keystore file Mysterium
+  exported (`0x….json`) and its passphrase (`module config mysterium
+  keystore=… --ask passphrase name=…`).
+- **New** makes a wallet on this computer. It shows a **top-up address**: send
+  MYST to it **on Polygon only**, and nothing else. Once the first top-up
+  arrives, the wallet registers itself with Mysterium, as Mysterium's own app
+  does; registering costs a small fee once, taken from that top-up. While a
+  wallet waits for its top-up, the app asks again every 30 seconds while the
+  wallet is open.
+- **History** lists the sessions the wallet paid for, top-ups the module saw
+  arrive, registrations, and top-ups bought through Mysterium's payment
+  gateways.
+- **Export** copies the wallet's key file to a folder of your choice. Without
+  the key file and its passphrase, the MYST in a wallet is lost, so export a
+  wallet you put money into. **Remove** moves the key file aside under the
+  module's folder (`removed/`) instead of deleting it.
+
+Each exit picks its wallet (**Wallet → Choose…** in the exit's dialog, or
+`--opt wallet=NAME`); an exit with none uses the first wallet. **One wallet
+holds one connection at a time**: Mysterium cancels a second session of the
+same wallet. So an exit on another node with the same wallet waits until the
+first is down, and exits on different wallets run side by side.
+
 ## Commands
 
 | Command | What it does |
@@ -216,4 +252,6 @@ number of browser profiles and boxes can share one exit.
 | `module up NAME`, `module down NAME` | Starts or stops a module's container by hand (`--lease`, `--country`). |
 | `module logs NAME` | Shows the recent log of the module's running containers. |
 | `module setup NAME` | Builds or pulls the module's image. |
+| `module accounts NAME` | Lists a module's accounts, Mysterium's wallets, with their state (`--refresh` asks now; `--json`). |
+| `module account NAME new\|show\|do\|rename\|export\|rm …` | Makes a wallet, shows one with its address and history, runs one of its actions (`register`), renames, exports or removes it. |
 | `module doctor` | Checks every installed module. |

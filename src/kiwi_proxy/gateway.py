@@ -336,9 +336,14 @@ def _provider_up(prov, ctx, ex: Exit):
     that takes one, in a container of its own for that selection."""
     sel = selection.for_exit(ex)
     if sel is None:
-        return prov.up(
-            ctx, lease=ex.endpoint.lease, country=ex.endpoint.country, **_options(prov.up, ex)
+        # A module that keys its own containers (Mysterium: wallet and node) is
+        # handed that key as the lease, so up, down and heal name the same one.
+        lease = (
+            selection.lease_for(ex)
+            if providers.keys_leases(ex.endpoint.module)
+            else ex.endpoint.lease
         )
+        return prov.up(ctx, lease=lease, country=ex.endpoint.country, **_options(prov.up, ex))
     if problems := sel.problems():
         raise providers.ProviderError(f"{ex.name}: " + "; ".join(problems))
     return prov.up(ctx, lease=selection.lease_for(ex), country=ex.endpoint.country, selection=sel)

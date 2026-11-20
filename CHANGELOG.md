@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.27.0
+
+- **Wallets: a module's accounts.** A module can keep accounts of its own and
+  kiwi-proxy shows them: **Wallets…** under Provider modules (instead of
+  Configure…) lists them with their state; **New** and **Import** make or take
+  one; a wallet's page has its top-up address with a copy button, its history,
+  what can be done with it (Register now), Rename, Export… and Remove, and asks
+  again every 30 seconds while the wallet waits for a top-up. On the command
+  line: `module accounts NAME` and `module account NAME new|show|do|rename|export|rm`.
+  An account an exit uses is not removed. kiwi-plugin-myst 0.6.0 uses it for
+  Mysterium wallets.
+- **A module can name its provider containers** from more than the lease
+  (`lease_key`): Mysterium exits on different wallets get nodes of their own.
+
 ## 0.26.0
 
 - **Direct exits: no proxy, still sealed.** `kiwi-proxy add NAME direct` (in
