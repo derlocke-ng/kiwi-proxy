@@ -155,8 +155,13 @@ def exit_options(name: str | None) -> list:
 
 
 def clean_options(name: str | None, given: dict[str, str]) -> dict[str, str]:
-    """`given` with empty values dropped; a key the module does not have is an error."""
+    """`given` with empty values dropped; a key the module does not have is an
+    error. An account (Mysterium's wallet) given by its name or the start of its
+    id is stored by its id, so renaming it later keeps the exit on it."""
     known = {s.key for s in exit_options(name)}
+    account_key = (
+        getattr(get_provider(name), "account_option", None) if has_accounts(name) else None
+    )
     out = {}
     for key, value in given.items():
         if key not in known:
@@ -164,7 +169,23 @@ def clean_options(name: str | None, given: dict[str, str]) -> dict[str, str]:
             raise ProviderError(f"{name}: no option {key!r} (it has: {have})")
         if value.strip():
             out[key] = value.strip()
+            if key == account_key:
+                out[key] = _account_id(name, value.strip())
     return out
+
+
+def _account_id(name: str, ref: str) -> str:
+    found = accounts(name)
+    low = ref.lower()
+    for acc in found:
+        if acc.id.lower() == low or acc.name == ref:
+            return acc.id
+    hits = [a for a in found if a.id.lower().removeprefix("0x").startswith(low.removeprefix("0x"))]
+    if len(hits) == 1:
+        return hits[0].id
+    noun = account_noun(name)
+    have = ", ".join(a.name for a in found) or "none yet"
+    raise ProviderError(f"{name}: no {noun} {ref!r} (there are: {have})")
 
 
 def keys_leases(name: str | None) -> bool:
@@ -258,6 +279,18 @@ def account_of(name: str, options: dict) -> str | None:
     module's default)."""
     fn, ctx = _account_hook(name, "account_of")
     return fn(ctx, dict(options or {}))
+
+
+def account_label(name: str, options: dict) -> str:
+    """The name of the account an exit uses, for a row ("Wallet 1"); its id
+    when the module no longer has it."""
+    account = account_of(name, options)
+    if not account:
+        return "none yet"
+    for acc in accounts(name):
+        if acc.id == account:
+            return acc.name
+    return f"{account} (not found)"
 
 
 def account_users(name: str, account: str) -> list[str]:

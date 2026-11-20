@@ -52,7 +52,7 @@ kiwi-proxy module config 9proxy username=YOU --ask password
 `module settings NAME` lists what the module asks for. `--ask KEY` asks for a
 value without showing what you type. `module status` and `module list` say
 when a module is not configured yet. In the app, the same settings are under
-**Preferences → Modules → Manage… → Configure…**. Mysterium keeps several
+**Preferences → Modules → Configure…**, beside each module. Mysterium keeps several
 wallets instead, under **Wallets…**; see [Mysterium exits](#mysterium-exits).
 
 ## Choose where an exit leaves
@@ -206,7 +206,7 @@ number of browser profiles and boxes can share one exit.
 
 A Mysterium exit pays for its connection from a **wallet**, a Mysterium
 identity with a balance in MYST. The module keeps as many wallets as you like;
-in the app they are under **Preferences → Modules → Manage… → Wallets…**.
+in the app they are under **Preferences → Modules → Wallets…**.
 
 ```bash
 kiwi-proxy module account mysterium new name=work --ask passphrase
@@ -231,8 +231,10 @@ kiwi-proxy add myst-nl --module mysterium --country nl --opt wallet=work
   wallet you put money into. **Remove** moves the key file aside under the
   module's folder (`removed/`) instead of deleting it.
 
-Each exit picks its wallet (**Wallet → Choose…** in the exit's dialog, or
-`--opt wallet=NAME`); an exit with none uses the first wallet. **One wallet
+Each exit picks its wallet by name (the **Wallet** list in the exit's dialog,
+with **Manage…** beside it, or `--opt wallet=NAME`); an exit with none uses
+the first wallet. The exit keeps the wallet's id, so renaming a wallet keeps
+its exits on it. **One wallet
 holds one connection at a time**: Mysterium cancels a second session of the
 same wallet. So an exit on another node with the same wallet waits until the
 first is down, and exits on different wallets run side by side.

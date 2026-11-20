@@ -276,6 +276,8 @@ and has these methods. The app then shows **Wallets…** instead of
 | `account_rename`, `account_export(ctx, id, dest)`, `account_remove` | Rename; the exported file's path; lines. |
 | `account_of(ctx, options)` | The account an exit with these options uses. |
 
+The exit dialog shows the account option as a list of the accounts' names
+(with **Manage…**), and `--opt` takes a name or an id; the id is stored.
 Importing an account is the module's `settings` and `configure`. kiwi-proxy
 refuses to remove an account that an exit uses (`providers.account_users`).
 

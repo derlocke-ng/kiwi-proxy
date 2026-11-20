@@ -38,17 +38,17 @@ class MaintenancePage(Adw.PreferencesPage):
 
 
 class ModulesPage(Adw.PreferencesPage):
-    """Preferences → Modules: which provider modules are installed, and the way to
-    their settings (the Provider modules dialog, as before)."""
+    """Preferences → Modules: every installed provider module with its state, Set
+    up, and its settings or wallets, right here."""
 
-    def __init__(self, window: Gtk.Window, installed: list[str]) -> None:
+    def __init__(self, window: Gtk.Window, installed: list[str] | None = None) -> None:  # noqa: ARG002
         super().__init__(title="Modules", icon_name="application-x-addon-symbolic")
-        group = Adw.PreferencesGroup(title="Provider modules")
-        row = Adw.ActionRow(
-            title="Installed", subtitle=", ".join(installed) or "none", use_markup=False
-        )
-        manage = Gtk.Button(label="Manage…", valign=Gtk.Align.CENTER)
-        manage.connect("clicked", lambda *_: window.activate_action("win.modules", None))
-        row.add_suffix(manage)
-        group.add(row)
-        self.add(group)
+        from .dialogs import ModulesGroup
+
+        self.group = ModulesGroup(self._toast, getattr(window, "_module_configured", None))
+        self.add(self.group)
+
+    def _toast(self, text: str) -> None:
+        dialog = self.get_ancestor(Adw.PreferencesDialog)
+        if dialog is not None:
+            dialog.add_toast(Adw.Toast(title=text))

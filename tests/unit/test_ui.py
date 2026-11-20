@@ -876,3 +876,19 @@ def test_the_wallet_dialogs_list_and_show_an_account(monkeypatch):
     older = AccountDialog("mysterium", acc)
     assert [r.get_title() for r in older._action_rows] == ["Register now"]
     older._on_closed()
+
+
+def test_the_exit_dialog_picks_a_wallet_by_name(monkeypatch):
+    from kiwi_proxy.providers.base import Account
+    from kiwi_proxy.ui.dialogs import AccountChoiceRow
+
+    found = [Account(id="0xaa", name="Wallet 1"), Account(id="0xbb", name="Test1")]
+    monkeypatch.setattr(providers, "accounts", lambda name, refresh=False, only=None: found)
+    row = AccountChoiceRow("mysterium", "Wallet")
+    labels = [row.get_model().get_string(i) for i in range(row.get_model().get_n_items())]
+    assert labels == ["The first (Wallet 1)", "Wallet 1", "Test1"]
+    assert row.get_text() == ""
+    row.set_text("0xbb")
+    assert row.get_selected() == 2 and row.get_text() == "0xbb"
+    row.set_text("0xdeadbeef00")
+    assert row.get_text() == "0xdeadbeef00", "a removed wallet stays until changed"

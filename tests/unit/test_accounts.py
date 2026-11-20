@@ -148,3 +148,23 @@ def test_cli_lists_shows_and_acts(wallets_module, capsys):
     assert "wallet made" in capsys.readouterr().out
     assert cli.main(["module", "account", wallets_module, "rename", "0xbb", "Spare"]) == 0
     assert cli.main(["module", "account", wallets_module, "show", "nope"]) == 1
+
+
+def test_a_wallet_given_by_name_is_kept_by_its_id(wallets_module, capsys):
+    assert providers.clean_options(wallets_module, {"wallet": "Second"}) == {"wallet": "0xbb"}
+    assert providers.clean_options(wallets_module, {"wallet": "bb"}) == {"wallet": "0xbb"}
+    with pytest.raises(
+        providers.ProviderError, match="no wallet 'Third' \\(there are: First, Second\\)"
+    ):
+        providers.clean_options(wallets_module, {"wallet": "Third"})
+    assert (
+        cli.main(
+            ["add", "b", "--module", wallets_module, "--country", "de", "--opt", "wallet=Second"]
+        )
+        == 0
+    )
+    assert exits.find_by_name("b").endpoint.options == {"wallet": "0xbb"}
+    capsys.readouterr()
+    assert cli.main(["show", "b"]) == 0
+    assert "  wallet    Second" in capsys.readouterr().out
+    assert providers.account_label(wallets_module, {}) == "First"

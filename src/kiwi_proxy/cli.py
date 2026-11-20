@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import getpass
 import json
@@ -315,6 +316,10 @@ def cmd_show(a: argparse.Namespace) -> int:
         _p("  tunnel    the VPN is not answering; it comes back by itself when the server does")
     if ex.endpoint.options:
         _p("  options   " + ", ".join(f"{k}={v}" for k, v in sorted(ex.endpoint.options.items())))
+    if providers.has_accounts(ex.endpoint.module):
+        with contextlib.suppress(providers.ProviderError):
+            noun = providers.account_noun(ex.endpoint.module)
+            _p(f"  {noun:9} {providers.account_label(ex.endpoint.module, ex.endpoint.options)}")
     if ex.socks_auth != "inject":
         _p(
             f"  socks     {ex.socks_auth} (clients' own SOCKS auth goes upstream behind the exit token)"

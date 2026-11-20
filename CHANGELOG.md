@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.27.2
+
+- **An exit picks its wallet by name**: the exit dialog's **Wallet** row is a
+  list of the wallets' names ("The first (Wallet 1)", "Test1") with
+  **Manage…** beside it, instead of the node picker with its ids. The exit
+  keeps the wallet's id, also when `--opt wallet=` is given a name, so renaming
+  a wallet keeps its exits on it. The exit's details and `show` name it.
+- **Preferences → Modules lists the modules itself**, each with its state, Set
+  up, and Configure… or Wallets…, instead of one row that opened another dialog.
+
 ## 0.27.1
 
 - The wallet page works with libadwaita 1.5 (Ubuntu 24.04): its buttons were

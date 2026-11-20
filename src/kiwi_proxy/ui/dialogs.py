@@ -130,6 +130,56 @@ def _dialog_header(primary: str, on_primary) -> tuple[Adw.HeaderBar, Gtk.Button,
     return header, cancel, button
 
 
+class AccountChoiceRow(Adw.ComboRow):
+    """Which of a module's accounts an exit uses (Mysterium: its wallet), by
+    name; the first entry is the module's default. get_text/set_text give and
+    take the account's id, like the option rows typed into."""
+
+    def __init__(self, module: str, title: str) -> None:
+        super().__init__(title=title, use_subtitle=False)
+        self._module = module
+        self._load()
+        manage = Gtk.Button(label="Manage…", valign=Gtk.Align.CENTER)
+        manage.add_css_class("flat")
+        manage.connect("clicked", self._on_manage)
+        self.add_suffix(manage)
+
+    def _load(self) -> None:
+        try:
+            found = providers.accounts(self._module)
+        except providers.ProviderError:
+            found = []
+        first = found[0].name if found else "none yet"
+        self._ids = [""] + [a.id for a in found]
+        self._labels = [f"The first ({first})"] + [a.name for a in found]
+        self._refresh()
+
+    def _on_manage(self, *_a) -> None:
+        from .accounts import AccountsDialog
+
+        def changed(*_x) -> None:
+            kept = self.get_text()
+            self._load()
+            self.set_text(kept)
+
+        AccountsDialog(self._module, on_changed=changed).present(self)
+
+    def _refresh(self) -> None:
+        self.set_model(Gtk.StringList.new(self._labels))
+
+    def set_text(self, value: str) -> None:
+        value = (value or "").strip().lower()
+        if value and value not in self._ids:
+            self._ids.append(value)  # a removed one stays visible until changed
+            self._labels.append(f"{value[:6]}…{value[-4:]} (not found)")
+            self._refresh()
+        self.set_selected(self._ids.index(value) if value in self._ids else 0)
+
+    def get_text(self) -> str:
+        i = self.get_selected()
+        return self._ids[i] if 0 <= i < len(self._ids) else ""
+
+
 class ExitEditor(Adw.Dialog):
     """Add an exit (`ex` None) or change one. Everything is checked the way the CLI
     checks it (exits.make_expose, endpoint.parse) before anything is saved.
@@ -203,7 +253,7 @@ class ExitEditor(Adw.Dialog):
         # What else the module lets an exit choose by (9proxy: state, city, zip
         # code, plan): one row each, made when the source is chosen.
         self._upstream = upstream
-        self._option_rows: dict[str, Adw.EntryRow] = {}
+        self._option_rows: dict[str, Gtk.Widget] = {}  # EntryRow, or AccountChoiceRow
         # A module that takes lists (Tor): Only and Never countries and relays,
         # chosen in their own dialog instead of the one-country row.
         self._only_countries: list[str] = []
@@ -402,7 +452,21 @@ class ExitEditor(Adw.Dialog):
             self._upstream.remove(row)
         self._option_rows = {}
         saved = self.ex.endpoint.options if self.ex and self.ex.endpoint.module == module else {}
+        account_key = (
+            getattr(providers.get_provider(module), "account_option", None)
+            if (providers.has_accounts(module))
+            else None
+        )
         for opt in providers.exit_options(module):
+            if opt.key == account_key:
+                # A wallet is chosen by its name from a list, not by an id.
+                row = AccountChoiceRow(module, opt.title)
+                row.set_text(kept.get(opt.key) or saved.get(opt.key, ""))
+                if opt.help:
+                    row.set_tooltip_text(opt.help)
+                self._upstream.add(row)
+                self._option_rows[opt.key] = row
+                continue
             row = Adw.EntryRow(title=opt.title)
             row.set_text(kept.get(opt.key) or saved.get(opt.key, ""))
             if opt.help:
@@ -430,11 +494,8 @@ class ExitEditor(Adw.Dialog):
         if state is not None:
             self.account_row.set_subtitle(state[1])
             if providers.has_accounts(module):
-                from .accounts import plural_title
-
-                noun = providers.account_noun(module)
-                self.account_row.set_title(plural_title(noun))
-                self.account_button.set_label("Manage…")
+                # The account row is the option's own (AccountChoiceRow, with Manage…).
+                self.account_row.set_visible(False)
             else:
                 self.account_row.set_title("Account")
                 self.account_button.set_label("Change…" if state[0] else "Set…")
@@ -947,6 +1008,13 @@ class ExitDetails(Adw.Dialog):
                     choose.connect("clicked", self._on_live_option, opt, row)
                     row.add_suffix(choose)
                     up.add(row)
+        if providers.has_accounts(ex.endpoint.module):
+            noun = providers.account_noun(ex.endpoint.module)
+            try:
+                label = providers.account_label(ex.endpoint.module, ex.endpoint.options)
+            except providers.ProviderError as exc:
+                label = str(exc)
+            up.add(_row(noun[:1].upper() + noun[1:], label))
         up.add(_row("Resolve through", _resolve_label(ex.dns)))
         lists = ", ".join(BLOCKLIST_LABELS.get(n, (n,))[0].lower() for n in ex.dns.blocklists)
         up.add(_row("Ad-blocking", lists or "off"))
@@ -1480,33 +1548,28 @@ class ModuleConfigDialog(Adw.Dialog):
         worker.run(lambda: self._apply(values), done, failed)
 
 
-class ModulesDialog(Adw.Dialog):
-    """The installed provider modules: are their images there, are they running."""
+class ModulesGroup(Adw.PreferencesGroup):
+    """The installed provider modules, one row each: is the image there, is it
+    running, Set up, and Configure… or Wallets… — on Preferences → Modules and in
+    the Provider modules dialog alike."""
 
     def __init__(self, toast=None, on_configured=None) -> None:
-        super().__init__(title="Provider modules", content_width=560, content_height=520)
+        super().__init__(title="Provider modules", description="Upstreams that become SOCKS5 exits")
         self._toast = toast
         self._on_configured = on_configured  # (module name) -> None, e.g. a snapshot
         self._setup_buttons: list[Gtk.Button] = []  # disabled together: one build at a time
-        page = Adw.PreferencesPage()
-        self.group = Adw.PreferencesGroup(description="Upstreams that become SOCKS5 exits")
         explain(
-            self.group,
+            self,
             "Each module turns an upstream (Tor, a VPN, 9proxy, Mysterium) into plain "
             "SOCKS5 for an exit. Install more with kiwi: kiwi install kiwi-plugin-tor "
             "(or -vpn, -9proxy, -myst).",
             app="providers",
         )
-        page.add(self.group)
         names = providers.discover()
         if not names:
-            self.group.add(_row("No modules installed", "kiwi install kiwi-plugin-tor"))
+            self.add(_row("No modules installed", "kiwi install kiwi-plugin-tor"))
         for name in names:
-            self.group.add(self._module_row(name))
-        view = Adw.ToolbarView()
-        view.add_top_bar(Adw.HeaderBar())
-        view.set_content(page)
-        self.set_child(view)
+            self.add(self._module_row(name))
 
     def _module_row(self, name: str) -> Adw.ActionRow:
         try:
@@ -1631,6 +1694,20 @@ class ModulesDialog(Adw.Dialog):
         except providers.ProviderError:
             pass
         return f"{name}: image ready"
+
+
+class ModulesDialog(Adw.Dialog):
+    """The provider modules in a dialog of their own (the window's modules action)."""
+
+    def __init__(self, toast=None, on_configured=None) -> None:
+        super().__init__(title="Provider modules", content_width=560, content_height=520)
+        page = Adw.PreferencesPage()
+        self.group = ModulesGroup(toast, on_configured)
+        page.add(self.group)
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        view.set_content(page)
+        self.set_child(view)
 
 
 class LogsDialog(Adw.Dialog):
