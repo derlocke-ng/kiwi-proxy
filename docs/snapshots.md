@@ -74,6 +74,12 @@ whether it changed since. So a device can tell:
 | changed here and on quince | both changed since they parted; you choose |
 | not on this device | only in the folder; Restore brings it here |
 
+When the folder holds newer copies of exits here, a notice under the window's
+header says so ("2 newer snapshots in your folder: shop, work") with
+**Import**, which restores them. An exit that is up is left alone until you
+bring it down, and one that changed here and elsewhere is not imported: that
+is the question below. ✕ hides the notice until another newer snapshot comes.
+
 Bringing an exit up when the folder holds a newer copy asks first ("Ask before
 using an older copy", on by default): restore and bring up, or bring up as it is.
 When both changed, you choose: use the snapshot, or keep this device's copy (it

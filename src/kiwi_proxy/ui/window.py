@@ -18,6 +18,7 @@ from . import snapshots as snapshot_ui  # noqa: E402
 from . import storage as storage_ui  # noqa: E402
 from . import worker  # noqa: E402
 from .dialogs import ExitDetails, ExitEditor, ModulesDialog, proxy_url  # noqa: E402
+from .notice import Notice  # noqa: E402
 
 # How often the snapshot folder is looked at (in window ticks): a sync client
 # brings new snapshots now and then, not every few seconds.
@@ -161,6 +162,8 @@ class Window(Adw.ApplicationWindow):
         view.add_top_bar(header)
         view.add_top_bar(self.status_banner)
         view.add_top_bar(self.snap_banner)
+        self.notice = Notice()  # news under the header: newer snapshots, with Import
+        view.add_top_bar(self.notice)
         view.set_content(self.stack)
         self.toasts.set_child(view)
         self.set_content(self.toasts)
@@ -764,6 +767,7 @@ class Window(Adw.ApplicationWindow):
             ]
             self._relations = relations
             self._away = away
+            self._tell_newer()
             if changed:
                 self._show_away()
                 self.refresh(rebuild=False)
@@ -826,6 +830,67 @@ class Window(Adw.ApplicationWindow):
             done,
             lambda exc: self._alert(f"Could not restore {name}", str(exc)),
         )
+
+    # ------------------------------------------------------- newer snapshots
+    def _newer(self) -> list:
+        """The exits here whose newest snapshot in the folder is newer than this
+        device's copy and nothing changed here since (changed on both sides is
+        the row's question, not an import)."""
+        found = []
+        for ident, rel in self._relations.items():
+            ex = self._exit(ident)
+            if ex is not None and rel.state == "folder_newer" and rel.head is not None:
+                found.append((ex, rel))
+        return sorted(found, key=lambda pair: pair[0].name.lower())
+
+    def _tell_newer(self) -> None:
+        newer = self._newer()
+        if not newer:
+            self.notice.clear()
+            return
+        self.notice.say(
+            notice_text([ex.name for ex, _rel in newer]),
+            "Import",
+            self._import_newer,
+            key=tuple((ex.id, rel.head.id) for ex, rel in newer),
+        )
+
+    def _import_newer(self) -> None:
+        """Restore the newer copies; an exit that is up is left alone, since its
+        gateway runs from the copy here."""
+        newer = self._newer()
+        busy = [ex.name for ex, _rel in newer if ex.id in self._up]
+        todo = [(ex, rel) for ex, rel in newer if ex.id not in self._up]
+
+        def work():
+            done, failed = [], []
+            for ex, rel in todo:
+                try:
+                    snapshot_items.restore_exit(ex.id, rel.head.id)
+                    done.append(ex)
+                except Exception as exc:  # noqa: BLE001 - said per exit
+                    failed.append(f"{ex.name}: {exc}")
+            return done, failed
+
+        def finished(result) -> None:
+            done, failed = result
+            for ex in done:
+                self._relations.pop(ex.id, None)
+            self.refresh()
+            self._poll_snapshots()
+            bits = []
+            if done:
+                bits.append(f"Imported {', '.join(ex.name for ex in done)}")
+            if busy:
+                bits.append(
+                    f"{', '.join(busy)} {'is' if len(busy) == 1 else 'are'} up: bring down, then import"
+                )
+            if bits:
+                self._toast("; ".join(bits))
+            if failed:
+                self._alert("Not imported", "\n".join(failed))
+
+        worker.run(work, finished, lambda exc: self._alert("Not imported", str(exc)))
 
     def _snapshots_changed(self) -> None:
         self._relations = {}
@@ -941,3 +1006,12 @@ class Window(Adw.ApplicationWindow):
         dialog = Adw.AlertDialog(heading=heading, body=body)
         dialog.add_response("ok", "OK")
         dialog.present(self)
+
+
+def notice_text(names: list[str]) -> str:
+    """ "A newer snapshot of work is in your folder" / "3 newer snapshots in your
+    folder: a, b, c" / "… a, b, c and 2 more"."""
+    if len(names) == 1:
+        return f"A newer snapshot of {names[0]} is in your folder"
+    shown = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+    return f"{len(names)} newer snapshots in your folder: {shown}"

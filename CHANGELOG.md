@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.28.0
+
+- **A notice under the header when the snapshot folder holds newer copies**
+  of exits here: "2 newer snapshots in your folder: shop, work", **Import** and
+  ✕. Import restores them; an exit that is up is left alone until it is down,
+  and one changed on two devices still asks when it is brought up. ✕ hides the
+  notice until another newer snapshot comes. The bar is kiwi-template's kit
+  notice (kit 0.1.4), copied until the app moves onto the kit.
+
 ## 0.27.2
 
 - **An exit picks its wallet by name**: the exit dialog's **Wallet** row is a

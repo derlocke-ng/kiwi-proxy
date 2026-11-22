@@ -512,9 +512,29 @@ def test_the_window_says_when_the_folder_is_newer_and_when_it_is_locked(snapshot
     _pump(lambda: win._relations.get(ex.id) is not None)
     assert "newer snapshot from titan" in win._rows[ex.id].get_subtitle()
 
+    # The notice under the header says so; ✕ keeps it away for this news;
+    # Import restores the newer copy.
+    _pump(lambda: win.notice.shown)
+    assert win.notice.label.get_text() == "A newer snapshot of mullvad is in your folder"
+    win.notice.close.emit("clicked")
+    win._tell_newer()
+    assert not win.notice.shown, "dismissed until the news changes"
+    win._import_newer()
+    _pump(lambda: exits.load(ex.id).notes == "changed on titan")
+    _pump(lambda: win._relations.get(ex.id) is not None and win._relations[ex.id].state == "same")
+    assert not win.notice.shown
+
     snapshots.lock()
     win._poll_snapshots()
     _pump(lambda: win.snap_banner.get_revealed())
+
+
+def test_the_notice_names_a_few_and_counts_the_rest():
+    from kiwi_proxy.ui.window import notice_text
+
+    assert notice_text(["a"]) == "A newer snapshot of a is in your folder"
+    assert notice_text(["a", "b"]) == "2 newer snapshots in your folder: a, b"
+    assert notice_text(list("abcde")) == "5 newer snapshots in your folder: a, b, c and 2 more"
 
 
 def test_the_history_dialog_lists_and_takes(snapshot_env, tmp_path):
